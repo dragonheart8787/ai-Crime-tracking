@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.so
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# Rust (possible future PyO3 extensions)
+target/
+
+# Data and artifacts (generated, never committed; reproduced from config + seed)
+data/
+artifacts/
+mlruns/
+outputs/
+multirun/
+*.parquet
+*.arrow
+*.feather
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
