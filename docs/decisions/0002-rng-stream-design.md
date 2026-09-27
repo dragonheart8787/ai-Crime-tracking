@@ -2,7 +2,8 @@
 
 - Status: ACCEPTED (Phase 0 review), revised in the Phase 0 revision pass (64-bit stable keys, explicit
   `PYTHONHASHSEED` regression test, recruitment partition for single-scenario membership); round 2: the
-  for-life strictness accepted and recorded as simplification S2
+  for-life strictness accepted and recorded as simplification S2; Milestone 1 checkpoint 1: isolation guarantee
+  restated on generation intents, settlement coupling measured
 - Scope: generator (Milestone 1), later any stochastic component (sampling, splits, training)
 
 ## Problem
@@ -101,19 +102,35 @@ enabled**:
      reported in validation; validation fails if the shortfall share exceeds a configured maximum. It is not
      a silent fallback.
 
-### Exact isolation guarantee to test
+### Exact isolation guarantee to test (revised after implementation, Milestone 1 checkpoint 1)
 
 For a baseline config and a variant with one family disabled (all else equal, `suspicious_prevalence` in the
-same mode):
+same mode), the guarantee is stated on **generation intents** (every transaction column except `status` and the
+four balance columns, which are outputs of settlement):
 
-- every instance of every other family with an index present in both runs is identical (members, parameters,
-  events, labels by `event_id`);
-- every entity not touched by any instance that differs between the runs has identical normal events
-  (by `event_id`, all columns except derived row position).
+- every instance of every other family with an index present in both runs is identical (members, drawn
+  parameters, phase intervals, scenario events and logins by `event_id`);
+- every normal transaction that involves no touched account (neither source nor destination is a member of the
+  disabled family's instances) is identical by `event_id` in all intent columns;
+- every normal login of an untouched account is identical, except session logins of transactions that involve a
+  touched account (such a login belongs to a transaction with a touched counterparty, so it is related);
+- the recruitment partition is identical.
 
-Balances of touched accounts may differ (settlement pass). When prevalence is held fixed by renormalizing quotas
-over enabled families, disabling one family activates *additional* instances of others; those are new instances,
-covered by the second bullet.
+**Settlement coupling (measured, not eliminated).** Settlement is one ledger in global order, so a change to a
+touched account's flows changes the running balances of its direct counterparties and of the shared external sink
+accounts (card network, cash), and can occasionally flip a later event's status through the overdraft rule.
+Measured on DEV seed 42 (2,500 persons, 90 days), untouched **internal** accounts only:
+
+| Family disabled | Touched accounts | Untouched internal accounts with any balance difference | ... with any status change |
+|---|---|---|---|
+| burst | 11 | 19 of 2,489 | 13 |
+| fan_out | 7 | 5 of 2,493 | 1 |
+| cycle | 6 | 4 of 2,494 | 4 |
+
+The earlier wording ("identical normal events, all columns except derived row position") was too strong: it
+ignored settlement. Removing this coupling would require settling scenario and normal flows on separate ledgers,
+which would break conservation of funds and balance realism; it is accepted and documented instead
+(`docs/LIMITATIONS.md`).
 
 ## Required tests (Milestone 1)
 
@@ -121,7 +138,8 @@ covered by the second bullet.
   `PYTHONHASHSEED=0` and `PYTHONHASHSEED=4242` (and a third with it unset), assert identical dataset content
   hash and identical per-table hashes.
 - Same seed twice gives the same hash; seeds 42 and 43 give different hashes.
-- Isolation test as defined above (family disabled, and one instance added).
+- Isolation test as defined above (implemented for one family disabled:
+  `tests/reproducibility/test_scenario_isolation.py`).
 - Registry collision test; AST test forbidding built-in `hash(` in generator code.
 - Rendezvous partition: every account in exactly one cell; disabling a family changes no assignment.
 

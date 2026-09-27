@@ -1,0 +1,11 @@
+# TINY profile: for unit and subprocess tests only (seconds to generate). Not a research profile.
+simulation: {days: 45}
+population: {n_persons: 400}
+recruitment: {eligible_share: 0.5, max_shortfall_share: 0.8}
+family_defaults:
+  max_instances: 2
+  min_instances: 1
+  instance_params:
+    start_day: {kind: Uniform, low: 0, high: 40}
+    dormant_gap_days: {kind: Uniform, low: 10, high: 20}
+splits: {train_end_day: 28, val_end_day: 37, horizons_hours: [24, 168], ref_negative_fraction: 0.10}

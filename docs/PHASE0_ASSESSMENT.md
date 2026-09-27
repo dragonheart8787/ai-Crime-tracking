@@ -268,7 +268,10 @@ realism, whether synthetic or real, and leakage risks. Only role: external sanit
 feature pipeline and baselines behave plausibly on data not produced by this generator. No citation
 details are given here because none were verified in this session.
 
-### 4.5 Output tables and entity-relationship model (planned schema)
+### 4.5 Output tables and entity-relationship model
+
+As built at Milestone 1 checkpoint 1; `src/fcip/common/schemas.py` is authoritative and decision 0010 lists the
+differences from the Phase 0 plan.
 
 Parquet files, one per table (CSV via explicit export: same names with `.csv`). All times are int64 seconds
 since the simulation epoch; all money is int64 minor units (0001). Primary keys are the canonical sort keys
@@ -276,18 +279,19 @@ used by the content hash.
 
 | Table | Primary key | Columns (planned) |
 |---|---|---|
-| `persons` | `person_id` | archetype, region, created_at |
-| `accounts` | `account_id` | account_kind (internal / external), owner_person_id (null for external), opened_at, closed_at (nullable), overdraft_limit_minor, region |
+| `persons` | `person_id` | region, household_id, created_at (archetype moved to the oracle table `person_truth`, 0010) |
+| `person_truth` (oracle) | `person_id` | archetype, origin (normal / scenario) |
+| `accounts` | `account_id` | account_kind (internal / external), external_role (employer / biller / landlord / external_world / card_network / cash), owner_person_id (null for external), opened_at, closed_at (nullable, unused in M1), overdraft_limit_minor (null = unlimited, external only), initial_balance_minor, region |
 | `devices` | `device_id` | device_kind, first_seen_at |
 | `ips` | `ip_id` | ip_context (household / public_wifi / corporate_nat / mobile_cgnat / residential_single), region |
 | `atms` | `atm_id` | region |
 | `merchants` | `merchant_id` | merchant_category, region |
 | `relations` | `(relation_type, src_id, dst_id, valid_from)` | relation_type in {OWNS_ACCOUNT, CONTROLS, USES_IP}, valid_to |
-| `transactions` | `event_id` | ts, txn_type, channel (APP / WEB / ATM / POS / SCHEDULED / INBOUND_EXTERNAL), src_account_id, dst_account_id (nullable), merchant_id (nullable), atm_id (nullable), amount_minor, region, device_id (nullable), ip_id (nullable), login_event_id (nullable), status (SETTLED / DECLINED), src_balance_before_minor, src_balance_after_minor, dst_balance_before_minor, dst_balance_after_minor |
+| `transactions` | `event_id` | ts, txn_type, channel (APP / WEB / ATM / POS / SCHEDULED / INBOUND_EXTERNAL), src_account_id, dst_account_id (never null: card payments credit the `card_network` account, ATM withdrawals the `cash` account, 0010), merchant_id (nullable), atm_id (nullable), amount_minor, region, device_id (nullable), ip_id (nullable), login_event_id (nullable), status (SETTLED / DECLINED), src_balance_before_minor, src_balance_after_minor, dst_balance_before_minor, dst_balance_after_minor |
 | **`logins`** | `event_id` | ts, account_id, device_id, ip_id, channel (app / web), outcome (SUCCESS / FAILURE) |
 | `labels` | `(entity_type, entity_id, scenario_id, valid_from)` | see 0004 |
 | `event_labels` | `(event_table, event_id)` | see 0004 |
-| `ground_truth_networks` | `network_id` | see 0004 |
+| `ground_truth_networks` | `network_id` | see 0004; also scenario_id, end_ts, n_created_accounts, n_rounds and the drawn instance parameters (amount scale, fan degree, hops, holding seconds, retention and forward fraction in permille) |
 | `network_members` | `(network_id, entity_type, entity_id)` | first_role, joined_ts |
 | `metadata.json` | | resolved config and its hash, seed, generator commit, package versions, per-table content hashes, dataset hash, per-file SHA-256, realized prevalence, recruitment shortfalls |
 

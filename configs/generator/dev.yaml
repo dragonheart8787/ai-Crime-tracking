@@ -1,0 +1,6 @@
+# DEV profile: about 2,000 to 3,000 accounts over 90 days (decided in the Phase 0 review).
+# For tests and fast iteration only; never for gates or statistics (R14).
+# min_instances: 1 forces every family to appear at least once so the DEV data exercises all families;
+# at this size that pushes realized prevalence above the 1% target (reported in metadata, not hidden).
+population: {n_persons: 2500}
+family_defaults: {max_instances: 3, min_instances: 1}

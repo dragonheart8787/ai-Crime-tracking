@@ -1,0 +1,4 @@
+# RESEARCH profile: about 100K accounts over 90 days. Not run at Milestone 1 checkpoint 1.
+population: {n_persons: 100000}
+recruitment: {eligible_share: 0.1, max_shortfall_share: 0.2}
+family_defaults: {max_instances: 150, min_instances: 0}

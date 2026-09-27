@@ -44,3 +44,19 @@ limitations once there is code and data. Nothing here has been evaluated unless 
 - DEV profile (about 2,000 to 3,000 accounts, 90 days, 1% prevalence) contains only tens of suspicious accounts; it is for
   tests and fast iteration, never for statistics.
 - GPU environment (torch / CUDA / PyG on the Windows laptop) is NOT YET EVALUATED.
+
+## Measured at Milestone 1 checkpoint 1 (DEV profile, seed 42)
+
+- **DEV prevalence is above target.** DEV forces at least one instance of every family (`min_instances: 1`) so that
+  all families are exercised; at 2,500 accounts this gives a realized prevalence of 1.84% against the 1% target
+  (46 member accounts in 11 networks). DEV is not used for statistics.
+- **Settlement couples untouched accounts to scenario changes.** Disabling one family leaves generation intents of
+  unrelated entities identical, but 4 to 19 of about 2,490 untouched internal accounts (their direct
+  counterparties) see different balances and 1 to 13 see a changed status on some event (decision 0002, measured
+  table). Shared external sink balances (card network, cash) differ throughout.
+- **Declines are common for some archetypes.** Outgoing declined share per archetype ranges from 1.0% (hf_merchant)
+  to 6.4% (spending_surge); overall 4.8% of transactions are declined. These values come from untuned placeholder
+  parameters, not calibration.
+- **Scenario-created accounts have no normal activity.** When a recruitment cell has too few eligible accounts, a
+  scenario opens new accounts that only carry scenario events. No DEV seed-42 instance needed this (shortfall share
+  0.0), but it can happen in small profiles and would make those accounts easy to spot.

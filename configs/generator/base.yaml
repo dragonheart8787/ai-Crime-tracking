@@ -1,0 +1,221 @@
+# Base generator configuration (decision 0005). Profiles (dev.yaml, research.yaml, tiny.yaml) overlay this.
+# All money is in minor units of the single synthetic currency SYN (100 minor units per major, S3).
+# Values are plausible placeholders chosen for a heterogeneous, non-trivially separable synthetic world;
+# they are not calibrated to any real population (see docs/LIMITATIONS.md).
+
+simulation:
+  seed: 42
+  days: 90
+  calendar_anchor: 2025-01-06   # a Monday; used only for weekday / day-of-month seasonality
+
+currency: {code: SYN, minor_units_per_major: 100}
+
+suspicious_prevalence: 0.01
+high_risk_phases: [EXIT]
+
+external: {n_employers: 20, n_billers: 12, n_landlords: 15, n_external_world: 40}
+
+infrastructure:
+  n_regions: 8
+  n_atms_per_region: 6
+  n_merchants_per_region: 40
+  merchant_category_mix: {grocery: 0.30, restaurant: 0.20, retail: 0.20, fuel: 0.10, pharmacy: 0.08,
+                          online_services: 0.07, travel: 0.05}
+  household_size: {kind: Empirical, values: [1, 2, 3, 4], probs: [0.35, 0.30, 0.20, 0.15]}
+  devices_per_person: {kind: Empirical, values: [1, 2, 3], probs: [0.5, 0.4, 0.1]}
+  p_desktop_device: 0.35
+  p_household_shared_device: 0.25
+  n_public_wifi_per_region: 5
+  n_corporate_nat_per_region: 6
+  n_cgnat_per_region: 10
+  p_home_wifi_mobile: 0.6
+  p_public_wifi: 0.05
+  atm_amount_step_minor: 2000
+  atm_max_withdrawal_minor: 100000
+  session_seconds: {kind: Uniform, low: 20, high: 1200}
+  session_window_seconds: 1800   # login invariant: APP/WEB transaction within this many seconds after its login
+  p_new_account_in_sim: 0.04
+  account_age_days: {kind: Uniform, low: 30, high: 3650}
+
+_salary_like: &salary_like
+  opening_balance: {kind: LogNormal, median: 250000, sigma: 0.9}
+  overdraft_limit: {kind: Empirical, values: [0, 50000, 100000], probs: [0.5, 0.3, 0.2]}
+  income: {amount: {kind: LogNormal, median: 320000, sigma: 0.35}, day_of_month: 25, p_internal_employer: 0.3}
+  rent: {p_has_rent: 0.6, amount: {kind: LogNormal, median: 110000, sigma: 0.3}, day_of_month: 1,
+         p_internal_landlord: 0.25}
+  bills: {n_bills: {kind: Empirical, values: [2, 3, 4], probs: [0.4, 0.4, 0.2]},
+          amount: {kind: LogNormal, median: 6000, sigma: 0.6}}
+  card: {daily_rate: {kind: Gamma, shape: 2.0, scale: 0.38}, amount: {kind: LogNormal, median: 3000, sigma: 0.9},
+         n_favorite_merchants: 8, p_night: 0.03}
+  atm: {weekly_rate: {kind: Gamma, shape: 2.0, scale: 0.4}, amount: {kind: LogNormal, median: 8000, sigma: 0.5}}
+  p2p: {monthly_rate: {kind: Gamma, shape: 2.0, scale: 1.0}, amount: {kind: LogNormal, median: 5000, sigma: 1.0},
+        n_contacts: {kind: ShiftedPoisson, shift: 2, lam: 4}, p_same_region_contact: 0.8, p_web: 0.2}
+  logins: {daily_browse_rate: {kind: Gamma, shape: 2.0, scale: 0.5}, p_failure: 0.03}
+  dormancy: {p_dormant_gap: 0.02, gap_days: {kind: Uniform, low: 20, high: 45}}
+  has_workplace_ip: true
+
+population:
+  n_persons: 2500
+  archetype_mix: {salary_worker: 0.40, student: 0.12, small_business: 0.08, hf_merchant: 0.03,
+                  traveler: 0.10, family: 0.14, spending_surge: 0.12, high_volume_business: 0.01}
+  archetypes:
+    salary_worker: *salary_like
+    traveler:
+      <<: *salary_like
+      travel: {trips: {kind: ShiftedPoisson, shift: 1, lam: 1.0}, trip_days: {kind: Uniform, low: 3, high: 14}}
+    family:
+      <<: *salary_like
+      p2p: {monthly_rate: {kind: Gamma, shape: 3.0, scale: 2.0}, amount: {kind: LogNormal, median: 8000, sigma: 0.8},
+            n_contacts: {kind: ShiftedPoisson, shift: 2, lam: 2}, p_same_region_contact: 0.95, p_web: 0.15}
+    spending_surge:
+      <<: *salary_like
+      surge: {duration_days: {kind: Uniform, low: 4, high: 14}, rate_multiplier: {kind: Uniform, low: 1.5, high: 3},
+              amount_multiplier: {kind: Uniform, low: 1.1, high: 1.8}}
+    student:
+      opening_balance: {kind: LogNormal, median: 30000, sigma: 1.0}
+      overdraft_limit: {kind: Empirical, values: [0], probs: [1.0]}
+      income: {amount: {kind: LogNormal, median: 95000, sigma: 0.4}, day_of_month: 1, p_internal_employer: 0.0}
+      rent: {p_has_rent: 0.3, amount: {kind: LogNormal, median: 50000, sigma: 0.3}, day_of_month: 1,
+             p_internal_landlord: 0.3}
+      bills: {n_bills: {kind: Empirical, values: [1], probs: [1.0]}, amount: {kind: LogNormal, median: 3000, sigma: 0.5}}
+      card: {daily_rate: {kind: Gamma, shape: 2.0, scale: 0.25}, amount: {kind: LogNormal, median: 1000, sigma: 0.7},
+             n_favorite_merchants: 6, p_night: 0.08}
+      atm: {weekly_rate: {kind: Gamma, shape: 2.0, scale: 0.3}, amount: {kind: LogNormal, median: 4000, sigma: 0.4}}
+      p2p: {monthly_rate: {kind: Gamma, shape: 2.0, scale: 1.5}, amount: {kind: LogNormal, median: 2000, sigma: 1.0},
+            n_contacts: {kind: ShiftedPoisson, shift: 3, lam: 5}, p_same_region_contact: 0.7, p_web: 0.1}
+      logins: {daily_browse_rate: {kind: Gamma, shape: 2.0, scale: 1.0}, p_failure: 0.05}
+      dormancy: {p_dormant_gap: 0.03, gap_days: {kind: Uniform, low: 20, high: 40}}
+    small_business:
+      opening_balance: {kind: LogNormal, median: 800000, sigma: 0.8}
+      overdraft_limit: {kind: Empirical, values: [100000, 300000], probs: [0.6, 0.4]}
+      rent: {p_has_rent: 0.5, amount: {kind: LogNormal, median: 200000, sigma: 0.3}, day_of_month: 1,
+             p_internal_landlord: 0.1}
+      bills: {n_bills: {kind: Empirical, values: [3, 4, 5], probs: [0.3, 0.4, 0.3]},
+              amount: {kind: LogNormal, median: 15000, sigma: 0.6}}
+      card: {daily_rate: {kind: Gamma, shape: 2.0, scale: 0.3}, amount: {kind: LogNormal, median: 5000, sigma: 0.8},
+             n_favorite_merchants: 6, p_night: 0.02}
+      atm: {weekly_rate: {kind: Gamma, shape: 2.0, scale: 0.2}, amount: {kind: LogNormal, median: 15000, sigma: 0.5}}
+      p2p: {monthly_rate: {kind: Gamma, shape: 2.0, scale: 0.5}, amount: {kind: LogNormal, median: 6000, sigma: 1.0},
+            n_contacts: {kind: ShiftedPoisson, shift: 2, lam: 3}, p_same_region_contact: 0.8, p_web: 0.5}
+      business:
+        daily_customer_payments: {kind: Gamma, shape: 3.0, scale: 1.5}
+        customer_amount: {kind: LogNormal, median: 4000, sigma: 0.8}
+        p_internal_customer: 0.15
+        weekly_supplier_payments: {kind: Gamma, shape: 2.0, scale: 1.0}
+        supplier_amount: {kind: LogNormal, median: 50000, sigma: 0.6}
+        daily_internal_payouts: {kind: Constant, value: 0.0}
+        payout_amount: {kind: LogNormal, median: 5000, sigma: 0.5}
+        is_employer: true
+        employer_weight: 1.0
+        is_landlord: true
+      logins: {daily_browse_rate: {kind: Gamma, shape: 3.0, scale: 1.0}, p_failure: 0.02}
+    hf_merchant:
+      opening_balance: {kind: LogNormal, median: 300000, sigma: 0.7}
+      overdraft_limit: {kind: Empirical, values: [100000], probs: [1.0]}
+      bills: {n_bills: {kind: Empirical, values: [2, 3], probs: [0.5, 0.5]},
+              amount: {kind: LogNormal, median: 10000, sigma: 0.6}}
+      card: {daily_rate: {kind: Gamma, shape: 2.0, scale: 0.2}, amount: {kind: LogNormal, median: 3000, sigma: 0.8},
+             n_favorite_merchants: 4, p_night: 0.02}
+      business:
+        daily_customer_payments: {kind: Gamma, shape: 4.0, scale: 3.5}
+        customer_amount: {kind: LogNormal, median: 1500, sigma: 0.7}
+        p_internal_customer: 0.4
+        weekly_supplier_payments: {kind: Gamma, shape: 2.0, scale: 1.0}
+        supplier_amount: {kind: LogNormal, median: 40000, sigma: 0.6}
+        daily_internal_payouts: {kind: Constant, value: 0.0}
+        payout_amount: {kind: LogNormal, median: 5000, sigma: 0.5}
+        is_employer: false
+        employer_weight: 1.0
+        is_landlord: false
+      logins: {daily_browse_rate: {kind: Gamma, shape: 3.0, scale: 2.0}, p_failure: 0.02}
+    high_volume_business:
+      opening_balance: {kind: LogNormal, median: 3000000, sigma: 0.7}
+      overdraft_limit: {kind: Empirical, values: [1000000], probs: [1.0]}
+      bills: {n_bills: {kind: Empirical, values: [4, 5, 6], probs: [0.3, 0.4, 0.3]},
+              amount: {kind: LogNormal, median: 40000, sigma: 0.6}}
+      business:
+        daily_customer_payments: {kind: Gamma, shape: 4.0, scale: 6.0}
+        customer_amount: {kind: LogNormal, median: 15000, sigma: 0.9}
+        p_internal_customer: 0.1
+        weekly_supplier_payments: {kind: Gamma, shape: 3.0, scale: 2.0}
+        supplier_amount: {kind: LogNormal, median: 150000, sigma: 0.6}
+        daily_internal_payouts: {kind: Gamma, shape: 3.0, scale: 1.5}
+        payout_amount: {kind: LogNormal, median: 20000, sigma: 0.9}
+        is_employer: true
+        employer_weight: 10.0
+        is_landlord: false
+      logins: {daily_browse_rate: {kind: Gamma, shape: 4.0, scale: 2.0}, p_failure: 0.02}
+
+recruitment:
+  eligible_share: 0.3
+  max_shortfall_share: 0.5
+  min_account_age_days_at_start: 7
+
+# Shared scenario-family settings; each family below overrides only what differs (loader expands this).
+family_defaults:
+  enabled: true
+  weight: 1.0
+  max_instances: 3
+  min_instances: 0
+  is_ood_family: false
+  instance_params:
+    amount_scale_minor: {kind: LogNormal, median: 60000, sigma: 0.8}
+    event_amount_sigma: 0.25
+    fan_degree: {kind: ShiftedPoisson, shift: 3, lam: 3}
+    hops: {kind: ShiftedPoisson, shift: 2, lam: 1.5}
+    transfers_per_source: {kind: ShiftedPoisson, shift: 1, lam: 0.5}
+    holding_hours: {kind: LogNormal, median: 12, sigma: 1.0}
+    retention: {kind: Beta, a: 4, b: 2}
+    forward_fraction: {kind: Uniform, low: 0.90, high: 0.99}
+    start_day: {kind: Uniform, low: 0, high: 90}
+    p_victim_origin: 0.5
+    amount_band_width: 0.15
+    dormant_gap_days: {kind: Uniform, low: 30, high: 60}
+  phases:
+    durations_hours:
+      SETUP: {kind: Gamma, shape: 2.0, scale: 12.0}
+      INFLOW: {kind: Gamma, shape: 2.0, scale: 24.0}
+      MOVEMENT: {kind: Gamma, shape: 2.0, scale: 12.0}
+      EXIT: {kind: Gamma, shape: 2.0, scale: 12.0}
+    p_repeat_round: 0.3
+    max_rounds: 3
+    p_exit: 0.9
+
+scenarios:
+  fan_in: {}
+  fan_out:
+    instance_params: {fan_degree: {kind: ShiftedPoisson, shift: 3, lam: 3}}
+  pass_through:
+    instance_params: {holding_hours: {kind: LogNormal, median: 2, sigma: 0.8}}
+    phases: {p_repeat_round: 0.6, max_rounds: 5}
+  burst:
+    instance_params: {fan_degree: {kind: ShiftedPoisson, shift: 4, lam: 3}}
+    phases:
+      durations_hours:
+        MOVEMENT: {kind: Gamma, shape: 2.0, scale: 0.5}
+  dormant_activation:
+    is_ood_family: true
+  multi_hop:
+    instance_params: {hops: {kind: ShiftedPoisson, shift: 2, lam: 2}}
+  cycle:
+    is_ood_family: true
+    instance_params:
+      fan_degree: {kind: ShiftedPoisson, shift: 3, lam: 1.5}
+      hops: {kind: ShiftedPoisson, shift: 1, lam: 1}
+  structuring_like:
+    instance_params:
+      fan_degree: {kind: ShiftedPoisson, shift: 2, lam: 2}
+      transfers_per_source: {kind: ShiftedPoisson, shift: 3, lam: 3}
+  shared_infrastructure:
+    instance_params: {fan_degree: {kind: ShiftedPoisson, shift: 3, lam: 2}}
+  account_to_cash:
+    instance_params: {holding_hours: {kind: LogNormal, median: 3, sigma: 0.8}}
+
+label_knowledge:
+  regime: delayed
+  p_never_known: 0.10
+  latency_days: {kind: LogNormal, median: 14.0, sigma: 0.75}
+
+training_labels: {mode: include_immature, maturity_horizon_days: 48, min_mature_train_days: 21}
+
+splits: {train_end_day: 60, val_end_day: 75, horizons_hours: [24, 168], ref_negative_fraction: 0.10}
