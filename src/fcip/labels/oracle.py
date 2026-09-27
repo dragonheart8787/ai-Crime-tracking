@@ -19,7 +19,7 @@ import polars as pl
 import pyarrow as pa
 
 from fcip.common.frames import to_df
-from fcip.common.io import read_table
+from fcip.common.io import read_columns, read_table
 
 _TOKEN = object()
 
@@ -85,7 +85,7 @@ class OracleLabels:
         return cls(
             read_table("labels", data_dir),
             read_table("event_labels", data_dir),
-            read_table("transactions", data_dir),
+            read_columns("transactions", data_dir, ["event_id", "ts", "src_account_id"]),
             read_table("ground_truth_networks", data_dir),
             read_table("network_members", data_dir),
         )

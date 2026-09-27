@@ -13,7 +13,7 @@ from fcip.temporal.splits import build_example_index
 from fcip.temporal.store import TemporalStore
 
 
-def test_perfect_scorer_gets_ap_one_against_full_ground_truth(tiny_ds, tiny_cfg) -> None:
+def test_perfect_scorer_gets_ap_one_against_full_ground_truth(tiny_ds, tiny_cfg, tiny_archetypes) -> None:
     T = tiny_ds.tables
     store = TemporalStore(T, tiny_ds.metadata["sim_end"], T["labels"])
     lab = pl.from_arrow(T["labels"])
@@ -26,7 +26,7 @@ def test_perfect_scorer_gets_ap_one_against_full_ground_truth(tiny_ds, tiny_cfg)
     oracle = OracleLabels(
         lab.to_arrow(), T["event_labels"], T["transactions"], T["ground_truth_networks"], T["network_members"]
     )
-    idx = build_example_index(store, oracle, tiny_cfg, 0)
+    idx = build_example_index(store, oracle, tiny_cfg, 0, archetype_of=tiny_archetypes)
     pts = pl.concat(
         [
             idx.train_all.select("account_id", "t"),

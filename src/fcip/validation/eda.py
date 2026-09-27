@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 
 from fcip.common.frames import to_df
 from fcip.common.io import read_table
@@ -37,9 +38,13 @@ def _md_table(df: pl.DataFrame, floats: int = 3) -> str:
     return "\n".join(lines)
 
 
-def compute(data_dir: Path) -> dict[str, Any]:
+def compute(data_dir: Path, ref_pool_method: str | None = None) -> dict[str, Any]:
     meta = json.loads((data_dir / "metadata.json").read_text(encoding="utf-8"))
     cfg = GeneratorConfig.model_validate(meta["config"])
+    if ref_pool_method is not None:
+        cfg = cfg.model_copy(
+            update={"splits": cfg.splits.model_copy(update={"ref_pool_method": ref_pool_method})}
+        )
     sm = summarize(data_dir)
     nets = to_df(read_table("ground_truth_networks", data_dir))
     lab = to_df(read_table("labels", data_dir))
@@ -96,7 +101,9 @@ def compute(data_dir: Path) -> dict[str, Any]:
         ((det["known_at"] - det.select(anchor).to_series()) / DAY).to_numpy() if det.height else np.zeros(0)
     )
     # splits and label knowledge at T_fit
-    store = TemporalStore.from_dir(data_dir, meta["sim_end"])
+    del tx
+    pa.default_memory_pool().release_unused()
+    store = TemporalStore.from_dir(data_dir, meta["sim_end"], views=False)
     oracle = OracleLabels.from_dir(data_dir)
     arche = dict(zip(owner["account_id"].to_list(), owner["archetype"].to_list(), strict=True))
     idx = build_example_index(store, oracle, cfg, horizon_s=0, archetype_of=arche)
@@ -116,7 +123,7 @@ def compute(data_dir: Path) -> dict[str, Any]:
         "TEST points": idx.test.height,
         "OOD pool points": idx.ood.height,
         "OOD-family member accounts": len(idx.e_ood),
-        "reference-pool accounts": len(idx.e_ref),
+        f"reference-pool accounts ({idx.ref_pool_method})": len(idx.e_ref),
     }
     for name, df in (("VAL", idx.val), ("TEST", idx.test)):
         tg = oracle.targets("active_phase", df["account_id"].to_numpy(), df["t"].to_numpy())
@@ -180,7 +187,7 @@ Oracle tables (archetypes, labels) are used here for description only.
 
 {_md_table(status)}
 
-Amount quantiles (minor units): 10% {q["0.1"]:,.0f}, 50% {q["0.5"]:,.0f}, 90% {q["0.9"]:,.0f}, 99% {q["0.99"]:,.0f}.
+Amount quantiles (minor units): 10% {q[0.1]:,.0f}, 50% {q[0.5]:,.0f}, 90% {q[0.9]:,.0f}, 99% {q[0.99]:,.0f}.
 
 {_md_table(mix)}
 
@@ -217,7 +224,7 @@ Detection latency (`known_at` minus terminal event, or network end if none), day
 """
 
 
-def write_report(data_dir: Path, out: Path) -> Path:
+def write_report(data_dir: Path, out: Path, ref_pool_method: str | None = None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(compute(data_dir)), encoding="utf-8")
+    out.write_text(render(compute(data_dir, ref_pool_method)), encoding="utf-8")
     return out

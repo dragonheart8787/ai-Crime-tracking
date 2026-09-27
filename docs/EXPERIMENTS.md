@@ -18,7 +18,7 @@ Standing rules for every experiment in this file:
 
 | ID | Title | Status |
 |---|---|---|
-| EXP-M1-G | Milestone 1 non-triviality gates | FROZEN 2026-09-27 (Milestone 1 checkpoint 2), before the first gate run; see the freeze addendum |
+| EXP-M1-G | Milestone 1 non-triviality gates | FROZEN 2026-09-27 before the first run; **RUN: all pass/fail gates PASS** (iteration 1) |
 | EXP-LM (planned) | Label-maturity ablation: `include_immature` vs `mature_only` | NOT REGISTERED YET (note only, below) |
 | (planned) | Prevalence sweep for distribution shift | NOT REGISTERED YET (note only, below) |
 | (planned) | Detection-delay sensitivity analysis | NOT REGISTERED YET (note only, below) |
@@ -156,11 +156,78 @@ feature or probe setting was changed.
 11. **Profile.** The Q-R4 rule is applied on the measured wall-clock time of one RESEARCH generation (A5), recorded
     in decision 0010 before the gate run.
 
+### Results (run 2026-09-27; iteration 1)
+
+Datasets: RESEARCH profile, calibration seeds 1000 to 1004, generator code at commit `5f9574f` plus working-tree
+changes that do not affect generation (verified afterwards by regenerating from the final commit, see the Milestone 1
+review packet). Reference pool: `stratified_archetype` (A2 rule, decision 0009). Output: `reports/gate_exp_m1_g.json`
+(per-seed files in `reports/gate/`). Each seed: about 366 s and 10.5 GB peak.
+
+| Seed | Dataset hash | VAL points | VAL positives | pi | G1 best single-feature AP | AP LR | AP tree | floor 3 x pi | G3 delta AP [95% CI] |
+|---|---|---|---|---|---|---|---|---|---|
+| 1000 | `e311027f7f7a` | 714,377 | 340 | 0.000476 | 0.0023 (total_amount_in_7d) | 0.0094 | 0.0018 | 0.0014 | +0.0101 [-0.0010, +0.0504] (89 pos) |
+| 1001 | `7352d7ff97e3` | 713,824 | 293 | 0.000410 | 0.0015 (total_amount_in_7d) | 0.0038 | 0.0047 | 0.0012 | -0.0049 [-0.0404, -0.0004] (76 pos) |
+| 1002 | `3efb2cffc359` | 714,115 | 269 | 0.000377 | 0.0015 (total_amount_in_7d) | 0.0017 | 0.0027 | 0.0011 | -0.0001 [-0.0003, +0.0001] (72 pos) |
+| 1003 | `c42d6eacb6f2` | 713,991 | 312 | 0.000437 | 0.0088 (distinct_devices_30d) | 0.0027 | 0.0015 | 0.0013 | +0.0020 [-0.0000, +0.0123] (82 pos) |
+| 1004 | `43ce496f259f` | 714,328 | 195 | 0.000273 | 0.0016 (total_amount_in_7d) | 0.0018 | 0.0029 | 0.0008 | +0.0004 [-0.0001, +0.0039] (57 pos) |
+
+**Pre-registered verdict (mean over seeds and at least 4 of 5 seeds):**
+
+| Gate | Result | Evidence |
+|---|---|---|
+| G1 single-feature ceiling (<= 0.30) | **PASS** | mean 0.0031; all 5 seeds pass |
+| G2a shallow-probe ceiling (<= 0.60) | **PASS** | mean LR 0.0039, mean tree 0.0027; all 5 seeds pass |
+| G2b signal floor (>= 3 x pi) | **PASS** | all 5 seeds pass |
+| G3 context contribution | report only | no consistent effect: 2 CIs include 0 with positive point estimates, 2 near 0, 1 significantly negative (seed 1001) |
+| G4 confounder share | report only | table below |
+
+G4: share of the top-1% LR-scored false positives by archetype (largest four):
+
+| Seed | Composition |
+|---|---|
+| 1000 | small_business 0.45, high_volume_business 0.23, salary_worker 0.12, traveler 0.06 |
+| 1001 | small_business 0.45, high_volume_business 0.31, salary_worker 0.11, student 0.04 |
+| 1002 | high_volume_business 0.42, small_business 0.31, salary_worker 0.11, family 0.06 |
+| 1003 | small_business 0.40, high_volume_business 0.21, salary_worker 0.16, family 0.08 |
+| 1004 | small_business 0.53, high_volume_business 0.32, salary_worker 0.05, family 0.03 |
+
+Informational (review request): separability within the archetype cluster that looked alike on 90-day aggregates
+versus the clearly distinct cluster, on VAL points of each cluster (LR trained on all TRAIN):
+
+| Seed | weak-cluster positives | weak: best single-feature AP | weak: LR AP | distinct-cluster positives | distinct: best single-feature AP | distinct: LR AP |
+|---|---|---|---|---|---|---|
+| 1000 | 256 | 0.0867 (total_amount_in_7d) | 0.0174 | 78 | 0.1057 (total_amount_in_7d) | 0.0494 |
+| 1001 | 237 | 0.0714 (total_amount_in_7d) | 0.0146 | 53 | 0.0765 (max_amount_7d) | 0.0011 |
+| 1002 | 196 | 0.0469 (total_amount_in_7d) | 0.0033 | 70 | 0.0052 (declined_count_7d) | 0.0038 |
+| 1003 | 245 | 0.0739 (total_amount_in_7d) | 0.0064 | 61 | 0.0660 (distinct_ips_30d) | 0.0011 |
+| 1004 | 143 | 0.1121 (total_amount_in_7d) | 0.0176 | 44 | 0.0106 (max_amount_7d) | 0.0004 |
+
+### Interpretation (written after seeing the results)
+
+1. **The gates pass, but the margin that matters is the floor, not the ceilings.** The better of the two probes
+   reaches about 6 to 20 times the point prevalence (pi about 0.03% to 0.05%), far below the ceilings. The floor passes on every seed but narrowly on
+   some (seed 1002: LR AP 0.0017 against a floor of 0.0011). The weakness noted at registration applies: `3 x pi` rules
+   out noise, not a nearly unlearnable dataset.
+2. **Confounders drive the low overall single-feature AP.** Within the salary-like cluster a single inflow feature
+   reaches AP 0.047 to 0.112 on every seed (within the distinct cluster 0.005 to 0.106), but over all points the best
+   single feature reaches only 0.0015 to 0.0088: the high-volume and small businesses
+   (about 9% of accounts) dominate the top of any amount- or degree-based ranking and account for 61% to 85% of the top
+   false positives (G4). This is the intended effect of the confounders, and it means per-account statics are not
+   enough on this data.
+3. **No evidence that the pre-registered context features add signal for a linear probe** (G3), with only 57 to 89 VAL
+   positives in the 200,000-point samples. This is a statement about these seven hand-made context features and a
+   linear model, not about graph models.
+4. **The target is hard by construction.** "Active scenario phase at the daily snapshot" is positive for only 0.03% to
+   0.05% of points, because label intervals are short (median 6 h HOLD to 31 h INFLOW, EDA report). This is relevant to
+   how Milestone 3 defines its targets and is recorded as an open question, not changed here.
+
+No generator iteration was triggered; the thresholds, features and probes were not changed.
+
 ### Iteration log
 
 | Iteration | Generator commit | G1 | G2a | G2b | G3 (report) | G4 (report) | Change made |
 |---|---|---|---|---|---|---|---|
-| (none yet) | | NOT YET EVALUATED | NOT YET EVALUATED | NOT YET EVALUATED | NOT YET EVALUATED | NOT YET EVALUATED | |
+| 1 | `5f9574f` (+ non-generation changes) | PASS | PASS | PASS | no consistent effect | businesses dominate top false positives | none (first run) |
 
 ---
 

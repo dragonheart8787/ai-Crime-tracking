@@ -11,7 +11,11 @@ def _r(g1: float, lr: float, tree: float, pi: float) -> dict:
 
 def test_all_pass() -> None:
     c = evaluate([_r(0.1, 0.3, 0.2, 0.01)] * 5)
-    assert c["G1_single_feature_ceiling"]["pass"] and c["G2a_probe_ceiling"]["pass"] and c["G2b_signal_floor"]["pass"]
+    assert (
+        c["G1_single_feature_ceiling"]["pass"]
+        and c["G2a_probe_ceiling"]["pass"]
+        and c["G2b_signal_floor"]["pass"]
+    )
 
 
 def test_one_bad_seed_is_tolerated_two_are_not() -> None:
@@ -22,13 +26,15 @@ def test_one_bad_seed_is_tolerated_two_are_not() -> None:
 
 
 def test_mean_must_also_hold() -> None:
-    res = [_r(0.1, 0.3, 0.2, 0.01)] * 4 + [_r(1.0, 0.3, 0.2, 0.01)]   # 4 of 5 pass, but the mean is 0.28 <= 0.30
+    res = [_r(0.1, 0.3, 0.2, 0.01)] * 4 + [
+        _r(1.0, 0.3, 0.2, 0.01)
+    ]  # 4 of 5 pass, but the mean is 0.28 <= 0.30
     assert evaluate(res)["G1_single_feature_ceiling"]["pass"]
     res = [_r(0.29, 0.3, 0.2, 0.01)] * 4 + [_r(1.0, 0.3, 0.2, 0.01)]  # mean 0.432 > 0.30
     assert not evaluate(res)["G1_single_feature_ceiling"]["pass"]
 
 
 def test_floor_fails_when_probes_are_at_prevalence() -> None:
-    res = [_r(0.005, 0.012, 0.011, 0.01)] * 5         # both probes below 3 x pi = 0.03
+    res = [_r(0.005, 0.012, 0.011, 0.01)] * 5  # both probes below 3 x pi = 0.03
     assert not evaluate(res)["G2b_signal_floor"]["pass"]
     assert evaluate(res)["G2a_probe_ceiling"]["pass"]

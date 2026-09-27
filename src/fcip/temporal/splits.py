@@ -177,9 +177,13 @@ def build_example_index(
             raise InvariantViolation(f"{name} contains OOD or reference-pool accounts")
     if train.height and (int(train["t"].to_numpy().max()) + h_max > train_end):
         raise InvariantViolation("a TRAIN target window reaches past train_end")
-    if val.height and (int(val["t"].to_numpy().min()) < train_end or int(val["t"].to_numpy().max()) + h_max > val_end):
+    if val.height and (
+        int(val["t"].to_numpy().min()) < train_end or int(val["t"].to_numpy().max()) + h_max > val_end
+    ):
         raise InvariantViolation("VAL outside its bounds")
-    if test.height and (int(test["t"].to_numpy().min()) < val_end or int(test["t"].to_numpy().max()) + h_max > sim_end):
+    if test.height and (
+        int(test["t"].to_numpy().min()) < val_end or int(test["t"].to_numpy().max()) + h_max > sim_end
+    ):
         raise InvariantViolation("TEST outside its bounds")
     h = hashlib.sha256()
     for df in (train, val, test, ood):

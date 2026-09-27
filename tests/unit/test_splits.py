@@ -15,18 +15,18 @@ DAY = 86400
 
 
 @pytest.fixture(scope="module")
-def parts(tiny_ds, tiny_cfg):
+def parts(tiny_ds, tiny_cfg, tiny_archetypes):
     T = tiny_ds.tables
     store = TemporalStore(T, tiny_ds.metadata["sim_end"], T["labels"])
     oracle = OracleLabels(
         T["labels"], T["event_labels"], T["transactions"], T["ground_truth_networks"], T["network_members"]
     )
-    return store, oracle, tiny_cfg
+    return store, oracle, tiny_cfg, tiny_archetypes
 
 
 def _index(parts, horizon_s=0, cfg=None):
-    store, oracle, c = parts
-    return build_example_index(store, oracle, cfg or c, horizon_s)
+    store, oracle, c, arche = parts
+    return build_example_index(store, oracle, cfg or c, horizon_s, archetype_of=arche)
 
 
 def test_purge_gap_and_bounds(parts) -> None:
@@ -60,7 +60,7 @@ def test_ood_members_and_reference_pool_never_in_train_val_test(parts, tiny_ds) 
 
 
 def test_ood_member_transactions_remain_visible_to_neighbors(parts, tiny_ds) -> None:
-    store, _, _ = parts
+    store, _, _, _ = parts
     idx = _index(parts)
     tx = store.as_of(store.sim_end - 1).transactions()
     touching = tx.filter(
@@ -70,7 +70,7 @@ def test_ood_member_transactions_remain_visible_to_neighbors(parts, tiny_ds) -> 
 
 
 def test_maturity_modes(parts) -> None:
-    store, oracle, cfg = parts
+    store, oracle, cfg, arche = parts
     idx = _index(parts, horizon_s=DAY)
     tr = idx.train_all
     expected = (idx.t_fit - (tr["t"] + DAY)) >= idx.maturity_horizon_s
@@ -87,7 +87,7 @@ def test_maturity_modes(parts) -> None:
     oracle2 = type(oracle).__new__(type(oracle))
     oracle2.__dict__.update(oracle.__dict__)
     oracle2._labels = lab  # noqa: SLF001
-    idx2 = build_example_index(store, oracle2, cfg, DAY)
+    idx2 = build_example_index(store, oracle2, cfg, DAY, archetype_of=arche)
     assert idx2.train_all["is_mature"].equals(tr["is_mature"])
     assert idx2.val.equals(idx.val) and idx2.test.equals(idx.test)
 
@@ -98,7 +98,7 @@ def test_mature_only_rejected_when_window_too_short() -> None:
 
 
 def test_training_targets_use_known_labels_only(parts) -> None:
-    _, oracle, _ = parts
+    _, oracle, _, _ = parts
     idx = _index(parts)
     tr = idx.train_all
     truth = oracle.targets("active_phase", tr["account_id"].to_numpy(), tr["t"].to_numpy())
@@ -112,7 +112,7 @@ def test_training_targets_use_known_labels_only(parts) -> None:
 
 
 def test_reference_pool_methods(parts) -> None:
-    store, oracle, cfg = parts
+    store, oracle, cfg, _ = parts
     normal = normal_account_ids(store)
     import pyarrow.parquet  # noqa: F401  (ensure pyarrow loaded)
 

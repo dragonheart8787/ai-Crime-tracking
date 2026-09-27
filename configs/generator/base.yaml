@@ -218,4 +218,5 @@ label_knowledge:
 
 training_labels: {mode: include_immature, maturity_horizon_days: 48, min_mature_train_days: 21}
 
-splits: {train_end_day: 60, val_end_day: 75, horizons_hours: [24, 168], ref_negative_fraction: 0.10}
+splits: {train_end_day: 60, val_end_day: 75, horizons_hours: [24, 168], ref_negative_fraction: 0.10,
+         ref_pool_method: stratified_archetype}   # A2 decision, decision 0009

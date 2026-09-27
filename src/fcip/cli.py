@@ -86,7 +86,7 @@ def _sanity(args: argparse.Namespace) -> int:
 def _eda(args: argparse.Namespace) -> int:
     from fcip.validation.eda import write_report
 
-    print(write_report(Path(args.data), Path(args.out)))
+    print(write_report(Path(args.data), Path(args.out), args.ref_pool_method))
     return 0
 
 
@@ -105,6 +105,18 @@ def _gate(args: argparse.Namespace) -> int:
         )
     out = {"experiment": "EXP-M1-G", "per_seed": results, "criteria": evaluate(results)}
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    print(json.dumps(out["criteria"], indent=2))
+    return 0
+
+
+def _gate_combine(args: argparse.Namespace) -> int:
+    from fcip.validation.gate import evaluate
+
+    results = []
+    for f in args.inputs:
+        results += json.loads(Path(f).read_text(encoding="utf-8"))["per_seed"]
+    out = {"experiment": "EXP-M1-G", "per_seed": results, "criteria": evaluate(results)}
     Path(args.out).write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
     print(json.dumps(out["criteria"], indent=2))
     return 0
@@ -137,13 +149,22 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("eda", help="write the Milestone 1 EDA report for a dataset")
     p.add_argument("--data", required=True)
     p.add_argument("--out", default="reports/eda_milestone1.md")
+    p.add_argument("--ref-pool-method", default=None, choices=["none_cell_hash", "stratified_archetype"])
     p.set_defaults(fn=_eda)
     p = sub.add_parser("gate", help="run the pre-registered EXP-M1-G gates on calibration-seed datasets")
     p.add_argument("--data", required=True, nargs="+", help="one dataset directory per calibration seed")
     p.add_argument("--out", default="reports/gate_exp_m1_g.json")
-    p.add_argument("--ref-pool-method", default=None, choices=["none_cell_hash", "stratified_archetype"],
-                   help="override the reference-pool method (A2 decision rule, EXPERIMENTS.md freeze item 6)")
+    p.add_argument(
+        "--ref-pool-method",
+        default=None,
+        choices=["none_cell_hash", "stratified_archetype"],
+        help="override the reference-pool method (A2 decision rule, EXPERIMENTS.md freeze item 6)",
+    )
     p.set_defaults(fn=_gate)
+    p = sub.add_parser("gate-combine", help="combine per-seed gate outputs and apply the pre-registered rule")
+    p.add_argument("--inputs", required=True, nargs="+")
+    p.add_argument("--out", default="reports/gate_exp_m1_g.json")
+    p.set_defaults(fn=_gate_combine)
     p = sub.add_parser("export-csv", help="export every table of a dataset as CSV")
     p.add_argument("--data", required=True)
     p.set_defaults(fn=_export)

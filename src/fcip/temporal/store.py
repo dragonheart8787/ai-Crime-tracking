@@ -28,7 +28,7 @@ import pyarrow as pa
 
 from fcip.common.errors import FutureAccessError
 from fcip.common.frames import to_df
-from fcip.common.io import read_table
+from fcip.common.io import read_columns, read_table
 from fcip.common.taxonomy import TxnType
 
 OBSERVABLE_TABLES = (
@@ -58,14 +58,45 @@ def _ro(a: np.ndarray) -> np.ndarray:
     return a
 
 
-class TemporalStore:
-    """Holds observable data only; see module docstring."""
+_T_INDEX_COLS = [
+    "event_id",
+    "ts",
+    "txn_type",
+    "src_account_id",
+    "dst_account_id",
+    "amount_minor",
+    "status",
+    "src_balance_after_minor",
+    "dst_balance_after_minor",
+]
+_L_INDEX_COLS = ["event_id", "ts", "account_id", "device_id", "ip_id", "outcome"]
 
-    def __init__(self, tables: dict[str, pa.Table], sim_end: int, labels: pa.Table | None = None) -> None:
-        missing = [n for n in OBSERVABLE_TABLES if n not in tables]
+
+def _sorted_by_ts_eid(df: pl.DataFrame) -> pl.DataFrame:
+    """Tables are written in (ts, event_id) order; sort only if that is not the case (avoids a full copy)."""
+    ts, eid = df["ts"].to_numpy(), df["event_id"].to_numpy()
+    if len(ts) < 2:
+        return df
+    ok = (ts[1:] > ts[:-1]) | ((ts[1:] == ts[:-1]) & (eid[1:] > eid[:-1]))
+    return df if bool(ok.all()) else df.sort("ts", "event_id")
+
+
+class TemporalStore:
+    """Holds observable data only; see module docstring.
+
+    ``views=False`` builds only the compact indexes used by point-in-time queries and the snapshot grid (much less
+    memory); :meth:`as_of` then raises, because the frames behind the view accessors were not kept.
+    """
+
+    def __init__(
+        self, tables: dict[str, pa.Table], sim_end: int, labels: pa.Table | None = None, views: bool = True
+    ) -> None:
+        need = OBSERVABLE_TABLES if views else ("transactions", "logins", "accounts")
+        missing = [n for n in need if n not in tables]
         if missing:
             raise ValueError(f"TemporalStore needs tables {missing}")
         self._sim_end = int(sim_end)
+        self._views = views
         acc = to_df(tables["accounts"]).sort("account_id")
         self._acc_ids = _ro(acc["account_id"].to_numpy())
         self._acc_opened = _ro(acc["opened_at"].to_numpy())
@@ -73,41 +104,45 @@ class TemporalStore:
         self._acc_internal = _ro((acc["account_kind"] == "internal").to_numpy())
         self._accounts = acc
 
-        t = to_df(tables["transactions"]).sort("ts", "event_id")
+        t = _sorted_by_ts_eid(to_df(tables["transactions"]))
         self._t_ts = _ro(t["ts"].to_numpy())
         self._t_eid = _ro(t["event_id"].to_numpy())
-        self._transactions = t
-        lg = to_df(tables["logins"]).sort("ts", "event_id")
+        lg = _sorted_by_ts_eid(to_df(tables["logins"]))
         self._l_ts = _ro(lg["ts"].to_numpy())
         self._l_eid = _ro(lg["event_id"].to_numpy())
-        self._logins = lg
-        self._relations = to_df(tables["relations"])
+        if views:
+            self._transactions = t
+            self._logins = lg
+            self._relations = to_df(tables["relations"])
 
-        # ---- account-centric side index: one row per (transaction, side), sorted by (account, ts, event_id)
+        # ---- account-centric side index: one row per (transaction, side), sorted by (account, ts, event_id).
+        # The order is computed first, then each column is gathered on its own to keep temporaries small.
+        n = t.height
         src_idx = self.account_index(t["src_account_id"].to_numpy())
         dst_idx = self.account_index(t["dst_account_id"].to_numpy())
-        n = t.height
-        settled = (t["status"] == "SETTLED").to_numpy()
-        is_transfer = (t["txn_type"] == TxnType.TRANSFER.value).to_numpy()
-        is_atm = (t["txn_type"] == TxnType.ATM_WITHDRAWAL.value).to_numpy()
-        night = ((t["ts"].to_numpy() % 86400) // 3600) < NIGHT_END_HOUR
-        side = {
-            "acct": np.concatenate([src_idx, dst_idx]),
-            "ts": np.concatenate([self._t_ts, self._t_ts]),
-            "eid": np.concatenate([self._t_eid, self._t_eid]),
-            "amount": np.tile(t["amount_minor"].to_numpy(), 2),
-            "out": np.concatenate([np.ones(n, bool), np.zeros(n, bool)]),
-            "cp": np.concatenate([dst_idx, src_idx]),
-            "settled": np.tile(settled, 2),
-            "transfer": np.tile(is_transfer, 2),
-            "atm": np.tile(is_atm, 2),
-            "night": np.tile(night, 2),
-            "after": np.concatenate(
-                [t["src_balance_after_minor"].to_numpy(), t["dst_balance_after_minor"].to_numpy()]
-            ),
+        acct = np.concatenate([src_idx, dst_idx])
+        order = np.lexsort(
+            (np.concatenate([self._t_eid, self._t_eid]), np.concatenate([self._t_ts, self._t_ts]), acct)
+        )
+
+        def both(a: np.ndarray, b: np.ndarray | None = None) -> np.ndarray:
+            return _ro(np.concatenate([a, a if b is None else b])[order])
+
+        ttype = t["txn_type"]
+        self._s = {
+            "acct": _ro(acct[order]),
+            "ts": both(self._t_ts),
+            "eid": both(self._t_eid),
+            "amount": both(t["amount_minor"].to_numpy()),
+            "out": _ro(order < n),
+            "cp": both(dst_idx, src_idx),
+            "settled": both((t["status"] == "SETTLED").to_numpy()),
+            "transfer": both((ttype == TxnType.TRANSFER.value).to_numpy()),
+            "atm": both((ttype == TxnType.ATM_WITHDRAWAL.value).to_numpy()),
+            "night": both(((self._t_ts % 86400) // 3600) < NIGHT_END_HOUR),
+            "after": both(t["src_balance_after_minor"].to_numpy(), t["dst_balance_after_minor"].to_numpy()),
         }
-        order = np.lexsort((side["eid"], side["ts"], side["acct"]))
-        self._s = {k: _ro(v[order]) for k, v in side.items()}
+        del acct, src_idx, dst_idx, ttype
         self._s_key = _ro(self._s["acct"] * KEY_SHIFT + self._s["ts"])
         self._s_ptr = _ro(np.searchsorted(self._s["acct"], np.arange(len(self._acc_ids) + 1)))
 
@@ -133,9 +168,19 @@ class TemporalStore:
 
     # ------------------------------------------------------------------ construction helpers
     @classmethod
-    def from_dir(cls, data_dir: Path, sim_end: int) -> TemporalStore:
-        tables = {n: read_table(n, data_dir) for n in OBSERVABLE_TABLES}
-        return cls(tables, sim_end, labels=read_table("labels", data_dir))
+    def from_dir(cls, data_dir: Path, sim_end: int, views: bool = True) -> TemporalStore:
+        if views:
+            tables = {n: read_table(n, data_dir) for n in OBSERVABLE_TABLES}
+        else:
+            tables = {
+                "transactions": read_columns("transactions", data_dir, _T_INDEX_COLS),
+                "logins": read_columns("logins", data_dir, _L_INDEX_COLS),
+                "accounts": read_table("accounts", data_dir),
+            }
+        store = cls(tables, sim_end, labels=read_table("labels", data_dir), views=views)
+        del tables
+        pa.default_memory_pool().release_unused()  # return Arrow's freed buffers to the OS
+        return store
 
     # ------------------------------------------------------------------ public API
     @property
@@ -155,6 +200,8 @@ class TemporalStore:
         return idx.astype(np.int64)
 
     def as_of(self, t: int, event_id: int | None = None) -> AsOfView:
+        if not self._views:
+            raise RuntimeError("this store was built with views=False; as-of views are not available")
         if not 0 <= t < self._sim_end:
             raise ValueError(f"cutoff {t} outside [0, sim_end)")
         return AsOfView(self, Cutoff(int(t), event_id))

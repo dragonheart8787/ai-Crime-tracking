@@ -1,0 +1,235 @@
+{
+  "experiment": "EXP-M1-G",
+  "per_seed": [
+    {
+      "data_dir": "data/processed/research_seed1001",
+      "seed": 1001,
+      "profile": "research",
+      "dataset_hash": "7352d7ff97e360a0427c88310b004a6e341e5c35239a6a9fc467c4fc58536df1",
+      "realized_prevalence": 0.00993,
+      "split_index_hash": "0a75e26d93ca74ff069e5ea9a8e6208b7f0bca1b7a7e7df59c9686b76dc2e7e7",
+      "ref_pool_method": "stratified_archetype",
+      "train_points": 4631596,
+      "train_positives": 1329,
+      "val_points": 713824,
+      "val_positives": 293,
+      "pi": 0.0004104653247859416,
+      "G1": {
+        "best_feature": "total_amount_in_7d",
+        "best_ap": 0.0015163595815995813,
+        "all": {
+          "total_amount_7d": 0.001313661667290952,
+          "total_amount_in_7d": 0.0015163595815995813,
+          "total_amount_out_7d": 0.0005911327224839244,
+          "txn_count_7d": 0.0004604185925322204,
+          "in_degree_7d": 0.0004553195677883485,
+          "out_degree_7d": 0.0004412575684036365,
+          "avg_holding_time_7d": 0.0005136697224174087,
+          "max_amount_7d": 0.0012729155889516918,
+          "net_flow_ratio_7d": 0.0005344649410162604,
+          "atm_share_7d": 0.0006736570157127685,
+          "night_share_7d": 0.0005528930276582082,
+          "declined_count_7d": 0.0012745496222992935,
+          "distinct_devices_7d": 0.00048729506090728383,
+          "distinct_ips_7d": 0.0004337600026184129,
+          "total_amount_30d": 0.0005800681093017014,
+          "total_amount_in_30d": 0.0006340055639194962,
+          "total_amount_out_30d": 0.0004279161119103139,
+          "txn_count_30d": 0.00040820597473158367,
+          "in_degree_30d": 0.0004603321718335123,
+          "out_degree_30d": 0.0004273536190650679,
+          "avg_holding_time_30d": 0.0004182722670678785,
+          "max_amount_30d": 0.0004122919254855061,
+          "net_flow_ratio_30d": 0.0005142837504155669,
+          "atm_share_30d": 0.0011677596847496988,
+          "night_share_30d": 0.0005745837566630653,
+          "declined_count_30d": 0.0004286955596029851,
+          "distinct_devices_30d": 0.0004999228912131988,
+          "distinct_ips_30d": 0.0005221779993330062,
+          "account_age_days": 0.00041802917245773396,
+          "balance": 0.0005286677992542444
+        }
+      },
+      "G2": {
+        "ap_lr": 0.003833801060099949,
+        "ap_tree": 0.004729274285016306,
+        "floor": 0.0012313959743578248
+      },
+      "G3": {
+        "sample_train": 200000,
+        "sample_val": 200000,
+        "val_positives": 76,
+        "ap_static": 0.007123009317523249,
+        "ap_static_plus_context": 0.002182903504261247,
+        "delta_ap": -0.004940105813262001,
+        "ci95": [
+          -0.04044342442058309,
+          -0.00038678865242577963
+        ],
+        "context_features": [
+          "nbr_mean_txn_count_30d",
+          "nbr_mean_in_degree_30d",
+          "nbr_mean_out_degree_30d",
+          "nbr_mean_account_age_days",
+          "burstiness_30d",
+          "median_gap_h_30d",
+          "credit_to_debit_h_30d"
+        ]
+      },
+      "G4": [
+        {
+          "archetype": "small_business",
+          "len": 3192,
+          "share": 0.44983089064261556
+        },
+        {
+          "archetype": "high_volume_business",
+          "len": 2190,
+          "share": 0.3086245772266065
+        },
+        {
+          "archetype": "salary_worker",
+          "len": 750,
+          "share": 0.1056933483652762
+        },
+        {
+          "archetype": "student",
+          "len": 310,
+          "share": 0.04368658399098083
+        },
+        {
+          "archetype": "spending_surge",
+          "len": 239,
+          "share": 0.033680947012401354
+        },
+        {
+          "archetype": "traveler",
+          "len": 214,
+          "share": 0.03015783540022548
+        },
+        {
+          "archetype": "family",
+          "len": 194,
+          "share": 0.027339346110484778
+        },
+        {
+          "archetype": "hf_merchant",
+          "len": 7,
+          "share": 0.0009864712514092446
+        }
+      ],
+      "clusters": {
+        "weak_on_aggregates": {
+          "points": 541759,
+          "positives": 237,
+          "prevalence": 0.0004374638907706194,
+          "best_single_feature": "total_amount_in_7d",
+          "best_single_feature_ap": 0.07135417252234298,
+          "lr_ap": 0.014556916397011331
+        },
+        "distinct_on_aggregates": {
+          "points": 165107,
+          "positives": 53,
+          "prevalence": 0.00032100395501099286,
+          "best_single_feature": "max_amount_7d",
+          "best_single_feature_ap": 0.07652240433888313,
+          "lr_ap": 0.0011200533579621482
+        }
+      },
+      "ref_pool_composition": [
+        {
+          "archetype": "family",
+          "population_n": 13893,
+          "population_share": 0.13893,
+          "pool_n": 1389,
+          "pool_share": 0.13891389138913893,
+          "diff_pp": -0.001610861086107085
+        },
+        {
+          "archetype": "hf_merchant",
+          "population_n": 3004,
+          "population_share": 0.03004,
+          "pool_n": 300,
+          "pool_share": 0.030003000300030003,
+          "diff_pp": -0.0036999699969997996
+        },
+        {
+          "archetype": "high_volume_business",
+          "population_n": 979,
+          "population_share": 0.00979,
+          "pool_n": 98,
+          "pool_share": 0.0098009800980098,
+          "diff_pp": 0.001098009800980064
+        },
+        {
+          "archetype": "salary_worker",
+          "population_n": 40083,
+          "population_share": 0.40083,
+          "pool_n": 4008,
+          "pool_share": 0.4008400840084009,
+          "diff_pp": 0.001008400840085688
+        },
+        {
+          "archetype": "small_business",
+          "population_n": 7979,
+          "population_share": 0.07979,
+          "pool_n": 798,
+          "pool_share": 0.07980798079807981,
+          "diff_pp": 0.0017980798079811344
+        },
+        {
+          "archetype": "spending_surge",
+          "population_n": 11951,
+          "population_share": 0.11951,
+          "pool_n": 1195,
+          "pool_share": 0.11951195119511951,
+          "diff_pp": 0.00019511951195039234
+        },
+        {
+          "archetype": "student",
+          "population_n": 12134,
+          "population_share": 0.12134,
+          "pool_n": 1213,
+          "pool_share": 0.12131213121312132,
+          "diff_pp": -0.0027868786878687546
+        },
+        {
+          "archetype": "traveler",
+          "population_n": 9977,
+          "population_share": 0.09977000000000001,
+          "pool_n": 998,
+          "pool_share": 0.09980998099809982,
+          "diff_pp": 0.003998099809980615
+        }
+      ],
+      "seconds": 363.4
+    }
+  ],
+  "criteria": {
+    "n_seeds": 1,
+    "G1_single_feature_ceiling": {
+      "values": [
+        0.0015163595815995813
+      ],
+      "mean": 0.0015163595815995813,
+      "threshold": 0.3,
+      "pass": true
+    },
+    "G2a_probe_ceiling": {
+      "lr": [
+        0.003833801060099949
+      ],
+      "tree": [
+        0.004729274285016306
+      ],
+      "threshold": 0.6,
+      "pass": true
+    },
+    "G2b_signal_floor": {
+      "per_seed_pass": [
+        true
+      ],
+      "pass": true
+    }
+  }
+}

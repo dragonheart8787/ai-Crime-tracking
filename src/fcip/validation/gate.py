@@ -13,7 +13,6 @@ from typing import Any
 import numpy as np
 import polars as pl
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 
 from fcip.common.frames import to_df
@@ -21,7 +20,12 @@ from fcip.common.io import read_table
 from fcip.common.rng import stream
 from fcip.config.generator import GeneratorConfig
 from fcip.evaluation.metrics import average_precision
-from fcip.features.probe import context_features, single_account_feature_names, snapshot_features
+from fcip.features.probe import (
+    NEIGHBOR_SOURCE,
+    context_features,
+    single_account_feature_names,
+    snapshot_features,
+)
 from fcip.labels.oracle import OracleLabels
 from fcip.temporal.splits import build_example_index, normal_account_ids, ref_pool_composition
 from fcip.temporal.store import TemporalStore
@@ -37,20 +41,26 @@ CLUSTER_DISTINCT = ("small_business", "hf_merchant", "student")
 
 
 class _Prep:
-    """log1p on features that are non-negative on TRAIN, then standardization fit on TRAIN."""
+    """log1p on features that are non-negative on TRAIN, then standardization fit on TRAIN (in place)."""
 
     def fit(self, x: np.ndarray) -> _Prep:
         self.nonneg = (x >= 0).all(axis=0)
-        self.scaler = StandardScaler().fit(self._log(x))
+        logged = self._log(x.copy())
+        self.mean = logged.mean(axis=0)
+        sd = logged.std(axis=0)
+        self.scale = np.where(sd > 0, sd, 1.0)
         return self
 
     def _log(self, x: np.ndarray) -> np.ndarray:
-        out = x.astype(np.float64).copy()
-        out[:, self.nonneg] = np.log1p(out[:, self.nonneg])
-        return out
+        x[:, self.nonneg] = np.log1p(x[:, self.nonneg])
+        return x
 
-    def transform(self, x: np.ndarray) -> np.ndarray:
-        return self.scaler.transform(self._log(x))
+    def transform(self, x: np.ndarray, inplace: bool = False) -> np.ndarray:
+        out = x if inplace else x.astype(np.float64, copy=True)
+        self._log(out)
+        out -= self.mean
+        out /= self.scale
+        return out
 
 
 def _lr(x_tr: np.ndarray, y_tr: np.ndarray) -> tuple[_Prep, LogisticRegression]:
@@ -102,14 +112,17 @@ def _cluster_bootstrap(
     return float(delta), float(lo), float(hi)
 
 
-def run_seed(data_dir: Path, g3_sample: int = G3_SAMPLE, n_boot: int = G3_BOOTSTRAP,
-             ref_pool_method: str | None = None) -> dict[str, Any]:
+def run_seed(
+    data_dir: Path, g3_sample: int = G3_SAMPLE, n_boot: int = G3_BOOTSTRAP, ref_pool_method: str | None = None
+) -> dict[str, Any]:
     """``ref_pool_method`` overrides the dataset's recorded split setting (used for the A2 decision)."""
     meta = json.loads((data_dir / "metadata.json").read_text(encoding="utf-8"))
     cfg = GeneratorConfig.model_validate(meta["config"])
     if ref_pool_method is not None:
-        cfg = cfg.model_copy(update={"splits": cfg.splits.model_copy(update={"ref_pool_method": ref_pool_method})})
-    store = TemporalStore.from_dir(data_dir, meta["sim_end"])
+        cfg = cfg.model_copy(
+            update={"splits": cfg.splits.model_copy(update={"ref_pool_method": ref_pool_method})}
+        )
+    store = TemporalStore.from_dir(data_dir, meta["sim_end"], views=False)
     oracle = OracleLabels.from_dir(data_dir)
     pt = to_df(read_table("person_truth", data_dir))
     acc = to_df(read_table("accounts", data_dir)).filter(pl.col("account_kind") == "internal")
@@ -118,16 +131,23 @@ def run_seed(data_dir: Path, g3_sample: int = G3_SAMPLE, n_boot: int = G3_BOOTST
 
     idx = build_example_index(store, oracle, cfg, horizon_s=0, archetype_of=archetype_of)
     names = single_account_feature_names()
-    train_pts, val_pts = idx.train("include_immature"), idx.val
-    grid = snapshot_features(store, sorted(set(train_pts["day"].to_list()) | set(val_pts["day"].to_list())))
-    tr = train_pts.join(grid, on=["account_id", "day"], how="left")
-    va = val_pts.join(grid, on=["account_id", "day"], how="left")
-    if (
-        tr.select(names).null_count().sum_horizontal().item()
-        or va.select(names).null_count().sum_horizontal().item()
-    ):
-        raise ValueError("missing features for some prediction points")
-    x_tr, x_va = tr.select(names).to_numpy(), va.select(names).to_numpy()
+    keys = ["account_id", "day", "t"]
+
+    def block(points: pl.DataFrame) -> tuple[pl.DataFrame, np.ndarray, pl.DataFrame]:
+        """Features for one set of points; returns keys, the feature matrix, and the neighbor-source columns of
+        every open account on those days (for G3). Frames are dropped as soon as possible (memory)."""
+        g = snapshot_features(store, sorted(set(points["day"].to_list())))
+        nb = g.select("account_id", "day", *NEIGHBOR_SOURCE)
+        j = points.join(g, on=["account_id", "day"], how="left")
+        del g
+        if j.select(names).null_count().sum_horizontal().item():
+            raise ValueError("missing features for some prediction points")
+        return j.select(keys), j.select(names).to_numpy(), nb
+
+    tr, x_tr, nb_tr = block(idx.train("include_immature"))
+    va, x_va, nb_va = block(idx.val)
+    grid = pl.concat([nb_tr, nb_va]).unique(subset=["account_id", "day"])
+    del nb_tr, nb_va
     # Q-R5: probes are trained on ground-truth targets (strongest case, conservative for the ceilings)
     y_tr = oracle.targets("active_phase", tr["account_id"].to_numpy(), tr["t"].to_numpy()).y
     t_va = oracle.targets("active_phase", va["account_id"].to_numpy(), va["t"].to_numpy())
@@ -168,14 +188,15 @@ def run_seed(data_dir: Path, g3_sample: int = G3_SAMPLE, n_boot: int = G3_BOOTST
 
     # ---- G3: context contribution on uniform samples (report only)
     rng = stream(0, "gate", "g3-sample", int(meta["seed"]))
-    tr_s = tr[np.sort(rng.choice(tr.height, min(g3_sample, tr.height), replace=False))]
-    va_s = va[np.sort(rng.choice(va.height, min(g3_sample, va.height), replace=False))]
+    i_tr = np.sort(rng.choice(tr.height, min(g3_sample, tr.height), replace=False))
+    i_va = np.sort(rng.choice(va.height, min(g3_sample, va.height), replace=False))
+    tr_s, va_s = tr[i_tr], va[i_va]
     c_tr = context_features(store, tr_s.select("account_id", "day"), grid)
     c_va = context_features(store, va_s.select("account_id", "day"), grid)
     ctx_names = c_tr.columns
     y_trs = oracle.targets("active_phase", tr_s["account_id"].to_numpy(), tr_s["t"].to_numpy()).y
     t_vas = oracle.targets("active_phase", va_s["account_id"].to_numpy(), va_s["t"].to_numpy())
-    xs_tr, xs_va = tr_s.select(names).to_numpy(), va_s.select(names).to_numpy()
+    xs_tr, xs_va = x_tr[i_tr], x_va[i_va]
     p_a, m_a = _lr(xs_tr, y_trs)
     p_b, m_b = _lr(np.hstack([xs_tr, c_tr.to_numpy()]), y_trs)
     s_a = m_a.predict_proba(p_a.transform(xs_va))[:, 1]
