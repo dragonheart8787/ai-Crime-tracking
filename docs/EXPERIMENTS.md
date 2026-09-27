@@ -159,8 +159,8 @@ feature or probe setting was changed.
 ### Results (run 2026-09-27; iteration 1)
 
 Datasets: RESEARCH profile, calibration seeds 1000 to 1004, generator code at commit `5f9574f` plus working-tree
-changes that do not affect generation (verified afterwards by regenerating from the final commit, see the Milestone 1
-review packet). Reference pool: `stratified_archetype` (A2 rule, decision 0009). Output: `reports/gate_exp_m1_g.json`
+changes that do not affect generation. Verified afterwards: a fresh clone of commit `08707a9` regenerates seed 1004
+with the identical dataset hash `43ce496f...` (551.9 s). Reference pool: `stratified_archetype` (A2 rule, decision 0009). Output: `reports/gate_exp_m1_g.json`
 (per-seed files in `reports/gate/`). Each seed: about 366 s and 10.5 GB peak.
 
 | Seed | Dataset hash | VAL points | VAL positives | pi | G1 best single-feature AP | AP LR | AP tree | floor 3 x pi | G3 delta AP [95% CI] |
