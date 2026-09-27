@@ -2,15 +2,21 @@
 
 - Date: 2026-09-26
 - Session type: cloud planning session (no GPU, allowlisted network). Planning and assessment only.
-- Status: **revised after first review (Phase 0 revision pass, 2026-09-27); awaiting review of the
-  revision**. No generator, feature, model or pipeline code exists.
+- Status: **revised twice after review (revision passes on 2026-09-27); awaiting review of round 2**.
+  No generator, feature, model or pipeline code exists.
 
 Revision pass summary: stable 64-bit RNG keys and a `PYTHONHASHSEED` regression test (0002); precise
 canonical content hash (0001); `known_at` made load-bearing with a non-degenerate latency model (0004);
 `suspicious_prevalence` as a config parameter (0005); OOD scenario-family holdout pool redesigned (new 0009);
-single-scenario membership as named simplification S1 with per-instance parameter diversity (0002, 0005);
+single-scenario membership as named simplification (now S1 and S2) with per-instance parameter diversity (0002, 0005);
 gate feature set pre-registered in `docs/EXPERIMENTS.md`; `logins` event table added to schema, outputs and
 ER model (section 4.5).
+
+Round-2 summary: label maturity with two training-label modes and a ground-truth-only evaluation rule (0009, 0004,
+`EXPERIMENTS.md`); simplifications renumbered S1 (no concurrent membership), S2 (single-scenario-for-life, must be
+relaxed before role-transition experiments), S3 (single currency, no per-row currency column), S4 (network-level
+label knowledge); `docs/LIMITATIONS.md` created; DEV fixed at about 2,000 to 3,000 accounts over 90 days; channel
+enum with the login invariant scoped to `APP` and `WEB` only.
 
 Conventions: anything not run is marked **NOT YET EVALUATED**. Statements from prior knowledge that
 were not verified in this session are marked *(unverified)*. The only things actually executed in this
@@ -161,9 +167,10 @@ entities unchanged" is defined precisely in 0002 as entities not touched by the 
 | R10 | **Dual-use drift** (generator knobs becoming evasion tools) | Violates 2.1 | Schema has shape-only parameters; no detector-in-the-loop; review checklist in `SECURITY_AND_ETHICS.md` |
 | R11 | **Environment** (Blackwell GPU + Windows + PyG extensions) | Blocks M5+ | Torch not needed until M5; verification plan in 0007; in-house sampler removes compiled-extension dependency |
 | R12 | **Scope creep** | Project never reaches the core comparison | Roadmap cuts in section 6 |
-| R13 | **Simplification S1 bias** (no overlapping scenario membership) | Networks are disjoint, which makes network detection easier than in reality | Named simplification (section 4.6); network-recovery results labeled "under S1"; revisit after Milestone 7 |
+| R13 | **Simplification S1/S2 bias** (no concurrent membership; single scenario for life) | Networks are vertex-disjoint, which makes network detection easier than in reality; no cross-scenario role transitions | Named simplifications (4.6, `LIMITATIONS.md`); results labeled with the simplifications in force; S2 relaxed before any role-transition experiment |
 | R14 | **Low positive counts at 1% prevalence** | DEV has only about 25 to 30 suspicious accounts; OOD families even fewer | DEV used for tests only; gates and all metrics at RESEARCH (or GATE) scale; power check before Milestone 3 |
-| R15 | **PU label noise from delayed labels** | Not-yet-known positives enter training as 0 | Intended realism; latent-positive count reported; oracle regime ablation quantifies the cost |
+| R15 | **PU label noise from delayed labels** | Not-yet-known positives enter training as 0, more often near `T_fit` | Label maturity and two training-label modes (0009); latent-positive and residual-noise counts reported; EXP-LM |
+| R16 | **Maturity ablation infeasible at 90 days** | With the default 48-day horizon only about 9% of the training window is mature (computed) | Validator rejects it; ablation on a 180-day profile or a horizon sweep (Q-M1) |
 
 ---
 
@@ -178,13 +185,13 @@ events and controllable difficulty, all needed by the research question.
 (employers, billers, "outside world") for conservation of funds.
 
 **Event tables**: `transactions` (transfer, card/merchant payment, ATM withdrawal, deposit, salary,
-bill; channel, region, currency, device, IP, status, balance before/after) and `logins`
+bill; channel, region, device, IP, status, balance before/after) and `logins`
 (account, device, IP, ts, outcome). Beneficiary age, frequency and interval are *derived features*
 computed through the as-of view, not stored columns, to avoid storing values that could encode the
 future.
 
-**Currency**: single currency in M1 (multi-currency adds FX conservation complexity with little
-research value now).
+**Currency**: one synthetic currency per dataset (`SYN`, 100 minor units per major), declared once in config and
+metadata; **no per-row `currency` column** (simplification S3, decision 0001).
 
 **Location**: coarse region codes, not coordinates.
 
@@ -228,16 +235,18 @@ labels are never visible as known labels, and it is evaluated only in a separate
 reference pool of never-trained-on normal accounts. Temporal and pattern generalization are thereby
 measured separately (2 x 2 table in 0009).
 
-### 4.2 Profiles (sizes to be confirmed, see Challenge 3)
+### 4.2 Profiles
 
 | Profile | Accounts | Days | Transactions | Purpose |
 |---|---|---|---|---|
-| DEV | 2K to 3K (proposed) | 90 | ~100K to 150K | tests, CI, fast iteration on CPU |
+| DEV | about 2,000 to 3,000 (decided in review) | 90 | ~100K to 150K (estimate) | tests, CI, fast iteration on CPU; never gates or statistics |
 | RESEARCH | ~100K | 90 | order of 10^7 (estimate, NOT YET EVALUATED) | main experiments |
 | LARGE | only with memory estimate | | | not planned before M12 |
 
 All profiles use `suspicious_prevalence = 0.01` by default. At DEV size that is roughly 25 to 30 suspicious
-accounts, enough for tests and the end-to-end integration run, not for any statistic (R14).
+accounts, enough for tests and the end-to-end integration run, not for any statistic (R14). The 90-day duration was
+preferred over 10,000 accounts for 30 days because it exercises archetype heterogeneity and temporal features. This
+deviates from the "about 10K accounts" DEV figure in `CLAUDE.md` section 10, with the reviewer's approval.
 
 Memory estimate for RESEARCH (back-of-envelope, NOT YET EVALUATED): ~25 columns, ~8 bytes average
 per value, 10^7 rows gives ~2 GB for transactions in memory, well within 64 GB.
@@ -274,7 +283,7 @@ used by the content hash.
 | `atms` | `atm_id` | region |
 | `merchants` | `merchant_id` | merchant_category, region |
 | `relations` | `(relation_type, src_id, dst_id, valid_from)` | relation_type in {OWNS_ACCOUNT, CONTROLS, USES_IP}, valid_to |
-| `transactions` | `event_id` | ts, txn_type, channel, src_account_id, dst_account_id (nullable), merchant_id (nullable), atm_id (nullable), amount_minor, currency, region, device_id (nullable), ip_id (nullable), login_event_id (nullable), status (SETTLED / DECLINED), src_balance_before_minor, src_balance_after_minor, dst_balance_before_minor, dst_balance_after_minor |
+| `transactions` | `event_id` | ts, txn_type, channel (APP / WEB / ATM / POS / SCHEDULED / INBOUND_EXTERNAL), src_account_id, dst_account_id (nullable), merchant_id (nullable), atm_id (nullable), amount_minor, region, device_id (nullable), ip_id (nullable), login_event_id (nullable), status (SETTLED / DECLINED), src_balance_before_minor, src_balance_after_minor, dst_balance_before_minor, dst_balance_after_minor |
 | **`logins`** | `event_id` | ts, account_id, device_id, ip_id, channel (app / web), outcome (SUCCESS / FAILURE) |
 | `labels` | `(entity_type, entity_id, scenario_id, valid_from)` | see 0004 |
 | `event_labels` | `(event_table, event_id)` | see 0004 |
@@ -294,23 +303,30 @@ Entity-relationship model (edge types from `CLAUDE.md` 5, with their timed sourc
 | WITHDRAW_AT (Account -> ATM) | `transactions` (txn_type atm_withdrawal) | ts |
 | PAYS_MERCHANT (Account -> Merchant) | `transactions` (txn_type card / merchant payment) | ts |
 
-Invariants that tie the tables together (tested in Milestone 1): every digital-channel transaction references a
-successful login of the same account, device and IP within the configured session window before it; a login's
+Invariants that tie the tables together (tested in Milestone 1): every transaction with channel `APP` or `WEB`
+references a successful login of the same account, device and IP within the configured session window before it;
+this applies to digital channels **only**: `ATM`, `POS`, `SCHEDULED` and `INBOUND_EXTERNAL` transactions have no
+login step in this model and must have null `device_id`, `ip_id` and `login_event_id` (checked both ways; channel
+table in 0005); a login's
 device is controlled by the account owner at that time (except in configured shared-device scenarios and
 confounders); `NEW_DEVICE_LOGIN` / `NEW_IP_LOGIN` are derived from `logins` via the as-of view and never stored.
 
 ### 4.6 Named Milestone 1 simplifications
 
-- **S1: single-scenario membership.** An account belongs to at most one suspicious scenario instance. As
-  designed (0002), the recruitment partition enforces this over the *whole simulation*, which is stricter than
-  "one active scenario at a time"; the stricter form is what keeps scenarios isolated for the reproducibility
-  requirement (see Q-R1). *Bias:* suspicious networks are vertex-disjoint, so connected-component and community
-  methods can separate networks more cleanly than in reality, where shared relays or cash-out points link
-  networks; network recall and alert-compression results will be optimistic. *Revisit:* after Milestone 7, by
-  allowing a configured share of members to join a second instance (which needs a coupling-aware isolation
-  test).
-- **S2: single currency** (unchanged from the first assessment).
-- **S3: network-level retrospective label knowledge** (0004): no partially known networks.
+Full table with biases and revisit conditions in `docs/LIMITATIONS.md`.
+
+- **S1: no concurrent scenario membership.** An account is in at most one active scenario at a time. *Bias:*
+  networks never overlap through a shared account at the same time; network recall and alert compression are
+  optimistic.
+- **S2: single-scenario-for-life** (accepted in the round-1 review). The recruitment partition (0002) makes an
+  account a member of at most one instance over the whole simulation, which is what keeps scenarios isolated for the
+  reproducibility requirement. *Bias:* networks are vertex-disjoint and no account changes role across scenarios
+  (e.g. VICTIM_LIKE, later RELAY). **S2 must be relaxed before any experiment that tests tracking of role changes over
+  time**, which is part of the core research question; `EXPERIMENTS.md` forbids registering such an experiment while
+  S2 is in force, and the roadmap lists the relaxation as a prerequisite (section 6). Relaxing it needs a
+  coupling-aware isolation test.
+- **S3: single currency**, no per-row currency column (0001).
+- **S4: network-level retrospective label knowledge** (0004): no partially known networks.
 
 ---
 
@@ -388,6 +404,10 @@ Milestone order follows `CLAUDE.md` 4, with proposed adjustments marked **(propo
 | 6 | Sequence-only next-event model (GRU, then Transformer) | Compared against Bayes ceiling | |
 | 7 | Temporal graph model | **(proposal)** start with one memory-based model (TGN, which PyG provides a module for *(unverified for the pinned version)*) and one simple non-memory baseline; others only if justified | Library review document first |
 | 8 | Multi-task model | Only if each single-task head beats its baseline **(proposal)**; weighting comparison limited to fixed vs uncertainty-based **(proposal)** | |
+
+**Prerequisite recorded in review:** before any experiment that tests whether the system tracks an entity's role
+changing over time (at the latest the role-inference work in Milestones 7 and 8), simplification S2 must be relaxed in the
+generator. That is a generator change, so it produces a new dataset version with its own `EXPERIMENTS.md` entry.
 | 9 | Explainability + calibration | | |
 | 10 | Streaming simulation | Needs a latency target first (Challenge 13) | Rust decision (c) here |
 | 11 | Dashboard | | |
@@ -409,7 +429,7 @@ In scope:
 4. Normal archetypes and confounders (section 4.1).
 5. Scenario families with stochastic phase grammars, `enabled`, `weight`, `max_instances` and
    `is_ood_family` per family; per-instance parameters drawn from family distributions; instance count
-   derived from `suspicious_prevalence`; recruitment partition enforcing S1 (0002, 0005).
+   derived from `suspicious_prevalence`; recruitment partition enforcing S1 and S2 (0002, 0005).
 6. Settlement pass with overdraft rule, declined status and balances.
 7. Outputs (schema in 4.5): `transactions`, **`logins`**, `accounts`, `persons`, `devices`, `ips`, `atms`,
    `merchants`, `relations`, `labels`, `event_labels`, `ground_truth_networks`, `network_members`,
@@ -418,12 +438,15 @@ In scope:
 8. `TemporalStore` / `AsOfView` / `PITQuery` minimal versions (enough for splits, probes and leakage
    tests).
 9. Split utility (0009): chronological TRAIN / VAL / TEST with purge gap, `known_at <= T_fit` for
-   training targets, OOD family pool and reference negative pool.
+   training targets, OOD family pool and reference negative pool, per-example `is_mature`, and **both**
+   training-label modes (`include_immature`, `mature_only`) implemented and tested.
+10a. Evaluation target type `OracleTargets` and metric-sanity functions that accept only it (ground-truth-only
+   evaluation rule, 0009). Only the metric plumbing needed for the probes and tests; no model evaluation.
 10. Validation: invariants, heterogeneity statistics, non-triviality probes, EDA report generated from
     computed numbers only.
 11. CLI `simulate`, `validate`, `eda`.
 12. Docs: README reproduction commands, `DATA.md`, `EXPERIMENTS.md` (freeze EXP-M1-G before the first
-    gate run, then log iterations), `ARCHITECTURE.md`, `LIMITATIONS.md` (S1 to S3 recorded there).
+    gate run, then log iterations), `ARCHITECTURE.md`, `LIMITATIONS.md` (exists; S1 to S4 recorded there).
 
 Invariants to test (definitions):
 
@@ -438,8 +461,13 @@ Invariants to test (definitions):
   relation that connects them.
 - Labels: interval invariants from 0004; every scenario event has an `event_labels` row; at most one
   terminal event per network.
-- Logins: every digital-channel transaction references a successful login of the same account, device and
-  IP within the session window before it.
+- Logins (digital channels only): every `APP` / `WEB` transaction references a successful login of the same account,
+  device and IP within the session window before it; `ATM`, `POS`, `SCHEDULED`, `INBOUND_EXTERNAL` transactions have
+  null device, IP and login references.
+- Currency: no `currency` column in any table; currency declared once in metadata.
+- Maturity and evaluation: `is_mature` independent of `known_at`; `mature_only` drops exactly the immature TRAIN
+  examples; validator rejects too-short mature windows; evaluation with a perfect scorer reaches AP = 1 on a dataset
+  where most positives are never known (fails if `known_at`-filtered labels are substituted).
 - Reproducibility: same seed gives same content hash, also across fresh subprocesses with different
   `PYTHONHASHSEED`; different seeds differ; disabling a family leaves other instances and untouched
   entities identical by `event_id` (exact guarantee in 0002); content hash equal across polars and pyarrow
@@ -492,7 +520,7 @@ src/fcip/simulation/archetypes/{__init__,base,salary_worker,student,small_busine
                                 hf_merchant,traveler,family,spending_surge,
                                 high_volume_business}.py
 src/fcip/simulation/confounders.py
-src/fcip/simulation/recruitment.py  # rendezvous recruitment partition (0002, S1)
+src/fcip/simulation/recruitment.py  # rendezvous recruitment partition (0002, S1 and S2)
 src/fcip/simulation/scenarios/{__init__,base,phases,fan_in,fan_out,pass_through,burst,
                                dormant_activation,multi_hop,cycle,structuring_like,
                                shared_infrastructure,account_to_cash}.py
@@ -533,6 +561,8 @@ tests/leakage/test_future_perturbation.py
 tests/leakage/test_import_boundaries.py
 tests/leakage/test_known_at.py      # delayed-label exclusion case (0004)
 tests/leakage/test_ood_labels_hidden.py
+tests/unit/test_maturity.py         # is_mature, both training-label modes, validator
+tests/unit/test_eval_ground_truth.py  # evaluation never uses known_at-limited labels
 tests/reproducibility/test_seed_determinism.py
 tests/reproducibility/test_pythonhashseed.py   # fresh subprocesses, different PYTHONHASHSEED
 tests/reproducibility/test_prevalence.py
@@ -542,7 +572,7 @@ tests/integration/test_dev_end_to_end.py
 docs/ARCHITECTURE.md
 docs/DATA.md
 docs/EXPERIMENTS.md                 # exists (draft EXP-M1-G); frozen before first gate run
-docs/LIMITATIONS.md
+docs/LIMITATIONS.md                 # exists since round 2; kept up to date
 docs/ROADMAP.md
 docs/ENVIRONMENT.md                 # local verification results (filled on the laptop)
 reports/eda_milestone1.md           # generated
@@ -578,6 +608,18 @@ Revision pass (same scratch virtualenv):
    polars read-back types: ['int64', 'int64', 'int64', 'large_string']
    content hash equal: True
    one-value change detected: True
+   ```
+
+Round-2 revision pass (same scratch virtualenv):
+
+7. Exact latency quantiles and label-unknown probabilities for the default model, and the size of the mature
+   training window for several simulation lengths (tables in 0009):
+   ```
+   latency quantiles (days): p50 14.0 p90 36.6 p95 48.1 p99 80.1
+   d=48: latency-only 0.050   incl. p_never_known 0.145
+   sim 90d, train_end 60, H_max 7d, maturity 48d: training t in [0,53], mature-only t in [0,5] -> 9% of training window
+   sim 180d, train_end 120, H_max 7d, maturity 48d: training t in [0,113], mature-only t in [0,65] -> 58% of training window
+   sim 365d, train_end 240, H_max 7d, maturity 48d: training t in [0,233], mature-only t in [0,185] -> 79% of training window
    ```
 
 Everything else in this document is design, and every performance figure is an estimate that is
@@ -627,7 +669,7 @@ reproducibility with the numpy RNG streams.
 | Language policy (0006) | see section 10 | Rust from the start |
 | Environment (0007) | see section 11 | assuming latest torch works with a CUDA 12.8 driver |
 | Layout / CLI (0008) | `src/fcip`, `python -m fcip.cli simulate --profile dev --seed 42` | `python -m src.cli` |
-| Splits / OOD (0009) | OOD families across the whole timeline, excluded from TRAIN/VAL by family, labels never known, evaluated in an OOD pool against a reference negative pool | OOD confined to after validation; unspecified masking |
+| Splits / OOD (0009) | OOD families across the whole timeline, excluded from TRAIN/VAL by family, labels never known, evaluated in an OOD pool against a reference negative pool; label maturity with `include_immature` (default) and `mature_only` modes; evaluation always against full ground truth | OOD confined to after validation; unspecified masking; evaluating against known labels |
 
 ---
 
@@ -651,7 +693,8 @@ into the records; [OPEN] means no decision yet.
    ~10 transactions per account, too sparse for a salary worker archetype (salary, rent, bills, card
    payments are already dozens per month), so archetypes cannot be heterogeneous and scenarios drown.
    *Proposal*: DEV = ~2K to 3K accounts, 90 days, ~100K to 150K transactions (or 10K accounts over 30
-   days). Final numbers after measuring the per-archetype rates (Q2). [OPEN]
+   days). Final numbers after measuring the per-archetype rates (Q2). [RESOLVED: about 2,000 to 3,000 accounts over
+   90 days]
 
 4. **Missing event table.** The event taxonomy has NEW_DEVICE_LOGIN, NEW_IP_LOGIN and the edge list has
    LOGIN_WITH and USES_IP, but the M1 output list has no login/session table, so those edges would have
@@ -694,7 +737,7 @@ into the records; [OPEN] means no decision yet.
 11. **Role taxonomy overlaps and changes over time.** CASH_OUT_RISK (role) and ATM_WITHDRAWAL (event)
     overlap; one account can be AGGREGATOR then DISTRIBUTOR within a network; an account can be in two
     scenarios. *Proposal*: phase-dependent multi-label roles with a configured precedence for
-    single-label views (Q4). [RESOLVED for M1: single-scenario membership (S1), so roles are single-valued at
+    single-label views (Q4). [RESOLVED for M1: no concurrent membership (S1) and single scenario for life (S2), so roles are single-valued at
     any t; the CASH_OUT_RISK vs ATM_WITHDRAWAL overlap remains a naming issue to settle in `DATA.md`]
 
 12. **Scope is too large for the research value of some items.** Six temporal-GNN families, three
@@ -731,28 +774,28 @@ into the records; [OPEN] means no decision yet.
 
 ## 14. Open questions for the reviewer
 
-Resolved in the first review: former Q3 (held-out families: replaced by the OOD pool, 0009), Q4 (single
-membership, S1), Q5 (gate numbers kept), Q6 (`known_at` included and enforced), Q7 (`fcip`), Q8
-(`suspicious_prevalence` = 0.01, configurable).
+Resolved in the first review: former Q3 (OOD pool, 0009), Q4 (single membership), Q5 (gate numbers kept), Q6
+(`known_at`), Q7 (`fcip`), Q8 (`suspicious_prevalence` = 0.01, configurable).
+
+Resolved in the round-1 revision review: Q-R1 (for-life partition accepted, recorded as S2 with a relaxation
+requirement), Q-R2 (PU reading confirmed; maturity added), Q-R3 (delay defaults accepted; limitation and planned
+sensitivity analysis recorded in `LIMITATIONS.md`), Q-R4 (gate profile by runtime), Q-R5 (gate probes on ground
+truth), Q-R6 (distribution shift lives under Evaluation; spec references resolved by topic from now on), Q2 (DEV
+about 2,000 to 3,000 accounts over 90 days).
 
 Still open:
 
-- **Q1** Environment: `nvidia-smi` output on the laptop (driver version, "CUDA Version"). Deferred by the
-  reviewer to before Milestones 3 to 5.
-- **Q2** DEV profile size: about 2K to 3K accounts over 90 days, or 10K accounts over 30 days? Not answered
-  in the review. Note that at 1% prevalence either choice gives only tens of suspicious accounts (R14).
+- **Q1** Environment: `nvidia-smi` output on the laptop. Deferred by the reviewer to before Milestones 3 to 5; does not
+  block Milestone 1.
 
-New in the revision pass:
+New in round 2:
 
-- **Q-R1** S1 strictness: the recruitment partition makes membership single-scenario over the *whole
-  simulation*, not just "one active scenario at a time" as requested, because sequential re-recruitment would
-  couple instances and break the isolation requirement. Accept the stricter form for Milestone 1?
-- **Q-R2** Not-yet-known positives are kept in training as 0 (positive-unlabeled), not dropped, because dropping
-  them requires the oracle. The revision prompt said such examples are "excluded from training"; this design
-  excludes them from the *positive* set only. Confirm this reading.
-- **Q-R3** Default latency LogNormal(median 14 days, sigma 0.75) and `p_never_known` 0.10 are assumptions chosen
-  for a 90-day simulation, not calibrated to real data. Acceptable as defaults?
-- **Q-R4** Gate profile: gates run on RESEARCH, or a 25K-account GATE profile if RESEARCH generation exceeds 15
-  minutes (decided on runtime only, before results). Acceptable?
-- **Q-R5** Gate probes are trained on oracle targets (strongest case, conservative for the ceilings). Acceptable?
-- **Q-R6** The revision prompt referenced `CLAUDE.md` "section 56"; I assumed section 8 (distribution shift). Correct?
+- **Q-M1** Maturity ablation feasibility. With the requested default (`maturity_horizon_days` = 48) and a 90-day
+  simulation, `mature_only` keeps only prediction times from day 0 to 5 (about 9% of the training window, with at most
+  5 days of history), and the validator will reject it. Options: (a) run EXP-LM on a `RESEARCH_LONG` profile of 180 days
+  (58% mature), keeping 48 days; (b) keep 90 days and sweep `maturity_horizon_days` in {14, 28, 48}, accepting that 14
+  and 28 leave more noise (residual unknown rates about 0.55 and 0.26 at those distances from the anchor); (c) both.
+  Recommendation: (c), with (a) as the primary arm. This affects Milestone 3 onward, not the Milestone 1 build, where both
+  modes and the validator are implemented regardless.
+- **Q-M2** Maturity reference time. I defined `reference_time = t + H` (end of the target window). An alternative is `t`
+  itself, which is simpler but more conservative (drops more data). Accept `t + H`?

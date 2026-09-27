@@ -4,10 +4,24 @@ Rules (`CLAUDE.md` 2.3): every experiment is registered here **before** it is ru
 comparison, success/failure criteria. Results are appended afterwards, including negative and null results.
 The protocol is never changed to rescue a hypothesis; any change after results exist is logged as a deviation.
 
+Standing rules for every experiment in this file:
+
+1. **Evaluation uses the full synthetic ground truth only.** Every metric (VAL, TEST, OOD) is computed against
+   `OracleLabels` via `OracleTargets`, never against `known_at`-limited labels. `known_at` restricts what the model may learn
+   from and use as input, not what it is graded against (decision 0009).
+2. **Training-label mode is always stated.** Every model experiment records `training_label_mode`
+   (`include_immature` default, or `mature_only`) and `maturity_horizon_days`. Results from the two modes are never pooled.
+3. **Simplifications are stated.** Every pre-registration lists which named simplifications (S1 to S4, `LIMITATIONS.md`)
+   are in force. An experiment about role changes over time cannot be registered while S2 is in force.
+4. **References to the original spec are resolved by topic name, not section number**, because the original spec's
+   numbering was collapsed when `CLAUDE.md` was written and the two schemes no longer correspond.
+
 | ID | Title | Status |
 |---|---|---|
 | EXP-M1-G | Milestone 1 non-triviality gates | PRE-REGISTERED DRAFT (Phase 0 revision); to be frozen before the first gate run |
+| EXP-LM (planned) | Label-maturity ablation: `include_immature` vs `mature_only` | NOT REGISTERED YET (note only, below) |
 | (planned) | Prevalence sweep for distribution shift | NOT REGISTERED YET (note only, below) |
+| (planned) | Detection-delay sensitivity analysis | NOT REGISTERED YET (note only, below) |
 
 ---
 
@@ -114,8 +128,34 @@ check is the oracle-phase-feature ceiling in `PHASE0_ASSESSMENT.md` section 5.3,
 ## Note: planned prevalence sweep (not yet registered)
 
 `suspicious_prevalence` is a config parameter (decision 0005), default 0.01 for DEV and RESEARCH. It is intended to be swept for
-the distribution-shift experiments listed in `CLAUDE.md` section 8 ("distribution shift (amounts, pattern frequency,
-populations, structures, unseen patterns)"): for example training at one prevalence and evaluating at others (candidate values
-0.002, 0.005, 0.01, 0.02). The revision prompt referred to "section 56"; `CLAUDE.md` has no such section, and section 8 is assumed
-to be the intended reference. The sweep will be pre-registered here with hypotheses and criteria before the first model milestone
-that uses it (Milestone 3 at the earliest). Nothing has been run.
+the **distribution shift** experiments (topic listed under Evaluation in `CLAUDE.md`: "distribution shift (amounts, pattern
+frequency, populations, structures, unseen patterns)"): for example training at one prevalence and evaluating at others
+(candidate values 0.002, 0.005, 0.01, 0.02). Confirmed in review: the original spec's "section 56" maps to this topic. The
+sweep will be pre-registered here with hypotheses and criteria before the first model milestone that uses it (Milestone 3 at
+the earliest). Nothing has been run.
+
+## Note: EXP-LM, label-maturity ablation (planned, not yet registered)
+
+Question: how much does recency-dependent label noise (positives not yet known at `T_fit`, labeled 0) change model quality,
+compared with training only on mature examples (decision 0009)?
+
+Design constraints already fixed:
+
+- Same dataset, same VAL / TEST / OOD sets, same model and hyperparameter budget; only the TRAIN set differs by
+  `training_label_mode`.
+- Both arms are scored against the full ground truth (standing rule 1).
+- Also reported: the residual share of unknown positives among mature TRAIN examples (from the oracle, evaluation code only),
+  and the training set size and positive count per arm, since `mature_only` trades noise for data volume.
+- An `oracle` label-knowledge arm (zero delay) may be added as an upper reference, clearly labeled as unrealistic.
+- **Feasibility constraint:** with a 90-day simulation and `maturity_horizon_days = 48`, `mature_only` keeps about 9% of the
+  training window (computed in Phase 0) and the config validator rejects it. The ablation therefore needs either a
+  `RESEARCH_LONG` profile (180 days, 58% of the training window mature) or a sweep over `maturity_horizon_days` in
+  {14, 28, 48} on the standard profile. To be decided before registration (open question Q-M1).
+
+Earliest milestone: 3 (first trained baseline). Nothing has been run.
+
+## Note: detection-delay sensitivity analysis (planned, not yet registered)
+
+The default delay model (LogNormal median 14 days, sigma 0.75, `p_never_known` 0.10) is an uncalibrated assumption
+(`LIMITATIONS.md`). A sensitivity analysis over median, sigma and `p_never_known` is planned for the first model milestone
+that trains on delayed labels. Nothing has been run.

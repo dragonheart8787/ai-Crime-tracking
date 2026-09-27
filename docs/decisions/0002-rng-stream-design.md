@@ -1,7 +1,8 @@
 # 0002: RNG stream design, stable keys and scenario recruitment isolation
 
 - Status: ACCEPTED (Phase 0 review), revised in the Phase 0 revision pass (64-bit stable keys, explicit
-  `PYTHONHASHSEED` regression test, recruitment partition for single-scenario membership)
+  `PYTHONHASHSEED` regression test, recruitment partition for single-scenario membership); round 2: the
+  for-life strictness accepted and recorded as simplification S2
 - Scope: generator (Milestone 1), later any stochastic component (sampling, splits, training)
 
 ## Problem
@@ -85,8 +86,12 @@ enabled**:
    `NONE` cell, so most accounts are never eligible for any scenario.
 3. An instance `(family, i)` selects its members only from its own cell, using its own RNG stream.
 4. Consequences:
-   - an account is in at most one scenario instance **over the whole simulation** (stricter than "one active
-     scenario at a time"; see Q-R1 in the assessment);
+   - an account is in at most one scenario instance **over the whole simulation**. This is stricter than "one
+     active scenario at a time" (simplification S1) and is recorded as its own simplification **S2**
+     (single-scenario-for-life), accepted for Milestone 1 in the round-1 review. S2 rules out sequential role
+     transitions across scenarios (e.g. an account that is VICTIM_LIKE in one network and later a RELAY in another),
+     which belong to the project's core research questions. **S2 must be relaxed before any experiment that tests
+     tracking of role changes over time**; relaxing it requires a coupling-aware version of the isolation test below;
    - disabling a family leaves every other instance's members, parameters and events unchanged, because no
      cell is reassigned;
    - raising `max_instances` for a family moves accounts only *into* the new cells (rendezvous property), so

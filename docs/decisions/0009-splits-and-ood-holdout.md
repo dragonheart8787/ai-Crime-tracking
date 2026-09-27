@@ -1,7 +1,7 @@
 # 0009: Chronological splits and the OOD scenario-family holdout pool
 
-- Status: PROPOSED in the Phase 0 revision pass (replaces the held-out-family options in the first
-  assessment, which were both rejected in review)
+- Status: ACCEPTED (round-1 revision review); extended in round 2 with label maturity, the two training-label
+  modes and the ground-truth-only evaluation rule
 - Scope: split utility (Milestone 1), training-example construction and evaluation (Milestone 3 onward)
 
 ## Problem
@@ -38,7 +38,7 @@ from the training and validation example sets **by family label**, and appear on
 
 | Set | Entities | Prediction times t | Targets / labels |
 |---|---|---|---|
-| TRAIN | ID entities, minus `E_ref` | `t <= train_end - H_max` (purge: every target window ends by `train_end`) | computed only from labels with `known_at <= T_fit = train_end` (decision 0004) |
+| TRAIN | ID entities, minus `E_ref` | `t <= train_end - H_max` (purge: every target window ends by `train_end`); in `mature_only` mode additionally `is_mature` (below) | computed only from labels with `known_at <= T_fit = train_end` (decision 0004) |
 | VAL | ID entities, minus `E_ref` | `train_end <= t <= val_end - H_max` | oracle targets for model selection; label-derived features use `known_at <= t` |
 | TEST (ID) | ID entities, minus `E_ref` | `val_end <= t <= sim_end - H_max` | oracle targets |
 | OOD | `E_ood` positives and negatives from `E_ref` | all t in `[t_min, sim_end - H_max]`, reported by time block (train / val / test period) | oracle targets |
@@ -59,6 +59,85 @@ Additional rules:
 - The ID TEST set does not contain OOD entities, so ID test metrics are not diluted by OOD positives, and OOD metrics are
   not inflated by ID positives.
 
+## Label maturity and training-label modes
+
+### Why
+
+Under decision 0004, a TRAIN example whose true target is positive but whose label is not yet known at `T_fit` is
+labeled 0. The probability of that happening depends on how recent the example is: an example whose outcome occurred
+shortly before `T_fit` is very likely mislabeled, one far in the past much less so. This recency-dependent label noise
+must be explicit and controllable, not silently absorbed.
+
+With the default latency (LogNormal, median 14 days, sigma 0.75, `p_never_known` 0.10), computed exactly in this
+session, the probability that a network's label is still unknown `d` days after its anchor event is:
+
+| d (days) | 3 | 7 | 14 | 28 | 48 | 60 |
+|---|---|---|---|---|---|---|
+| latency only | 0.980 | 0.822 | 0.500 | 0.178 | 0.050 | 0.026 |
+| including `p_never_known` | 0.982 | 0.840 | 0.550 | 0.260 | 0.145 | 0.124 |
+
+(latency quantiles: p50 14.0, p90 36.6, p95 48.1, p99 80.1 days)
+
+### Definitions
+
+- `maturity_horizon_days` (config, default **48**, about the 95th percentile of the default latency distribution).
+- For a TRAIN example `(entity, t)` with horizon `H`: `reference_time = t + H`, the end of the target window, i.e. the
+  latest time the outcome being predicted could have occurred.
+- `is_mature = (T_fit - reference_time) >= maturity_horizon_days`.
+- `is_mature` uses only `T_fit`, `t` and `H`, all known to the modeler at fit time. It never reads `known_at` or the
+  oracle, so selecting on it is not a leak.
+
+### Two modes (both implemented in the Milestone 1 split utility)
+
+`training_label_mode` (config):
+
+1. **`include_immature`** (default): all TRAIN examples are kept, immature ones with their forced-0 labels where the label
+   is unknown. This matches what an institution would actually train on.
+2. **`mature_only`** (ablation): TRAIN examples with `is_mature = false` are dropped. Targets of the remaining examples are
+   still computed from labels with `known_at <= T_fit`; maturity lowers the chance that a positive is still unknown but
+   does not remove it.
+
+Both modes produce the same VAL, TEST and OOD sets; only TRAIN differs. The `SplitIndex` records the mode,
+`maturity_horizon_days`, and per-example `is_mature`, so both modes can be built from one dataset and one index.
+
+The difference in performance between the two modes is an **experiment to report** (see `docs/EXPERIMENTS.md`,
+EXP-LM, planned), not something to hide inside one dataset choice.
+
+### Two limits of maturity, stated plainly
+
+1. **Mature does not mean correctly labeled.** A share `p_never_known` of networks (default 10%) is never known, so even
+   fully mature positives from those networks stay 0. Also, the latency is anchored at the network's *terminal* event
+   (decision 0004), which can be later than `reference_time` when the predicted outcome is an intermediate high-risk event,
+   so the real delay for such examples is longer than the maturity rule assumes. The residual rate of unknown positives among
+   mature examples is therefore not zero; it is measured with the oracle, in evaluation code only, and reported.
+2. **At a 90-day simulation the default maturity horizon leaves almost nothing to train on.** Computed for the default
+   split (`train_end` = day 60, `H_max` = 7 days, maturity 48 days): training prediction times run from day 0 to 53, mature
+   ones only from day 0 to 5, about 9% of the training window, and those have at most 5 days of history. For a 180-day
+   simulation with `train_end` = day 120 it would be 58%; for 365 days with `train_end` = day 240, 79%.
+   Consequences:
+   - the config validator **raises** if `mature_only` leaves fewer than `min_mature_train_days` (default 21) days of
+     training prediction times, instead of silently producing a tiny training set;
+   - the maturity ablation needs a longer simulation (proposed: a `RESEARCH_LONG` profile with 180 days) or a sweep over
+     `maturity_horizon_days` in {14, 28, 48}. This is open question Q-M1 in the assessment.
+
+## Evaluation rule: ground truth only
+
+**All metrics are computed against the full synthetic ground truth (`OracleLabels`), never against `known_at`-limited
+labels.** This holds for VAL (model selection, thresholds, calibration), TEST and OOD. The designer holds the ground truth;
+scoring predictions against it passes no information into the model, it only checks honestly whether the predictions were
+right. `known_at` limits what the *model* may learn from and use as input, never what it is graded against.
+
+Enforcement:
+
+- Metric functions accept targets only as an `OracleTargets` object (a distinct type produced by the target builder from
+  `OracleLabels`); passing known-label objects or raw arrays raises `TypeError`. Known-label objects are a different type
+  with no conversion path.
+- **Required test (Milestone 1):** a tiny dataset where a large share of TEST positives belong to networks with `known_at`
+  null or after `sim_end`. A "perfect" scorer that assigns score 1 to every true positive and 0 elsewhere must obtain
+  AP = 1.0 and recall = 1.0. If evaluation code substituted `known_at`-filtered labels, those positives would be counted as
+  negatives with top scores and AP would drop below 1, so the test would fail. A second assertion checks that the number of
+  positives reported by the evaluator equals the oracle count, not the known count.
+
 ## Reporting (2 x 2)
 
 |  | train period times | test period times |
@@ -72,7 +151,8 @@ would be ranked against negatives the model was trained on, which inflates preci
 ## Split utility interface (to implement in Milestone 1)
 
 `build_example_index(store, oracle, split_cfg) -> SplitIndex` returning `train, val, test, ood_by_block, ref_negatives`
-as arrays of `(entity_id, t)`, plus the `T_fit` for TRAIN. It asserts, and raises on violation:
+as arrays of `(entity_id, t)`, plus `T_fit`, `training_label_mode`, `maturity_horizon_days` and a per-TRAIN-example
+`is_mature` flag. It asserts, and raises on violation:
 
 - `E_ood` ∩ entities(TRAIN ∪ VAL) = ∅; `E_ref` ∩ entities(TRAIN ∪ VAL) = ∅; `E_ref` ∩ `E_ood` = ∅;
 - time bounds per set, as above;
@@ -87,6 +167,10 @@ as arrays of `(entity_id, t)`, plus the `T_fit` for TRAIN. It asserts, and raise
 - `known_labels()` never returns an OOD-family row, even at `sim_end`.
 - Purge: no TRAIN target window overlaps VAL prediction times; same for VAL and TEST.
 - `known_at` test from decision 0004.
+- Maturity: `is_mature` computed from `T_fit`, `t`, `H` only (metamorphic: changing `known_at` values leaves `is_mature`
+  unchanged); `mature_only` drops exactly the immature TRAIN examples and leaves VAL/TEST/OOD identical; the validator
+  raises when the mature training window is shorter than `min_mature_train_days`.
+- Ground-truth-only evaluation test above.
 - Disabling the OOD flag on a family moves its entities back into TRAIN/VAL/TEST and changes nothing else in the
   generated data (the flag affects splits only, not generation).
 

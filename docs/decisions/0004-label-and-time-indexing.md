@@ -1,7 +1,8 @@
 # 0004: Label and time indexing scheme, and label knowledge time
 
 - Status: ACCEPTED (Phase 0 review), revised in the Phase 0 revision pass (`known_at` made load-bearing,
-  default latency distribution, logins as a timed event source)
+  default latency distribution, logins as a timed event source); round 2: label maturity and the
+  ground-truth-only evaluation rule (details in 0009), simplification numbering S1/S2/S4
 - Scope: generator outputs (`labels`, `event_labels`, `ground_truth_networks`), as-of label access,
   splits (decision 0009), targets, training-example construction
 
@@ -34,7 +35,9 @@ family, phase, is_ood_family, known_at (nullable)`
 
 - Before its first scenario activity an entity has no scenario row; it is NORMAL.
 - Role at t is derived from the phase at t. Milestone 1 forbids membership in more than one scenario
-  instance (decision 0002, simplification S1 in the assessment), so the point-in-time role is single-valued.
+  instance at a time (S1), and in fact in at most one instance for the whole simulation (S2, decision 0002), so
+  the point-in-time role is single-valued. Role changes *within* one network (e.g. AGGREGATOR then DISTRIBUTOR) are
+  still represented; role changes *across* scenarios (e.g. VICTIM_LIKE, later RELAY) are not, until S2 is relaxed.
 - `known_at` is null when the network is never detected (see below).
 
 ### `event_labels` (one row per scenario event, transactions and logins)
@@ -104,15 +107,20 @@ Every consumer filters on `known_at <= cutoff` in addition to the event-time rul
 | Walk-forward / rolling splits (later) | the same rule per fold, with that fold's `T_fit` |
 | Features that use labels (e.g. "counterparty previously flagged") | only through `known_labels()` at the feature's own cutoff t |
 | Evaluation-time features | same as features: `known_at <= t` |
-| Evaluation *targets* | use `OracleLabels` (ground truth), which is legitimate for scoring and is not reachable from feature code |
+| Evaluation *targets* (VAL, TEST, OOD) | **always** the full ground truth via `OracleTargets`, never `known_at`-limited labels; metric functions reject any other target type; required test in 0009 |
 
 ### How "not yet known" examples are treated in training
 
 An (entity, t) example whose oracle target is positive but whose label is not known at `T_fit` is **not a
 positive training example**. It stays in the training set with target 0 (unlabeled), exactly as a real
-institution would see it (a positive-unlabeled setting). It is *not* dropped: deciding to drop it would
-require the oracle, which would itself be a leak. The count of such latent positives is reported as a
+institution would see it (a positive-unlabeled setting). It is *not* dropped on the basis of its label: deciding
+that would require the oracle, which would itself be a leak. The count of such latent positives is reported as a
 diagnostic from `OracleLabels` in evaluation code only.
+
+This noise is recency-dependent, so it is made explicit and controllable through **label maturity** (decision 0009):
+`training_label_mode = include_immature` (default, keeps the forced-0 labels) or `mature_only` (ablation, drops TRAIN
+examples whose target window ended less than `maturity_horizon_days` before `T_fit`). Maturity depends only on
+`T_fit`, `t` and `H`, never on `known_at`, so dropping immature examples is not a leak.
 
 ### Required test (Milestone 1)
 

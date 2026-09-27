@@ -40,7 +40,12 @@ Option B:
 ### Money as integer minor units
 
 All monetary columns (`amount_minor`, `balance_before_minor`, `balance_after_minor`,
-`overdraft_limit_minor`) are **int64 minor units** (e.g. cents) in a single currency. Rationale:
+`overdraft_limit_minor`) are **int64 minor units** (e.g. cents) in **one currency per dataset**
+(simplification S3). There is **no per-row `currency` column** in any Milestone 1 table: a column that looked
+supported but could not be converted correctly would be worse than none. The currency is declared once in config
+and `metadata.json` as `{code: "SYN", minor_units_per_major: 100}` (a synthetic unit, so no real-currency amounts are
+implied). The schema registry rejects any `currency` column. Multi-currency support (per-currency minor-unit exponent,
+FX events, conservation per currency) is future work. Rationale:
 conservation of funds becomes an exact integer identity instead of a float tolerance, and the content
 hash never has to canonicalize floats. Float columns are allowed in derived feature tables later, not
 in canonical generator tables. NaN is forbidden in canonical tables.

@@ -1,6 +1,7 @@
 # 0005: Generator configuration schema
 
-- Status: ACCEPTED (Phase 0 review), revised in the Phase 0 revision pass (`suspicious_prevalence`,
+- Status: ACCEPTED (Phase 0 review); round 2 adds currency, channel enum with login scope, training-label block.
+  Revised in the Phase 0 revision pass (`suspicious_prevalence`,
   per-instance parameter distributions, OOD family flag, label-knowledge block, login block,
   recruitment `max_instances`)
 - Scope: `configs/generator/*.yaml` and their Pydantic schema, Milestone 1
@@ -84,8 +85,40 @@ distributions are not allowed for latency; `p_never_known` in [0, 0.5].
 ### Logins block
 
 Per archetype: login rate distribution, device count, probability of logging in from a new device or new IP, session
-length. Digital-channel transactions must reference a successful login of the same account, device and IP within the
-configured session window (validated invariant).
+length.
+
+Transaction channels (closed enum) and the login invariant's scope:
+
+| Channel | Meaning | Login required | `device_id` / `ip_id` |
+|---|---|---|---|
+| `APP` | mobile banking app, initiated by the account holder | **yes** | required |
+| `WEB` | online banking, initiated by the account holder | **yes** | required |
+| `ATM` | card at an ATM (withdrawal) | no | null |
+| `POS` | card-present payment at a merchant terminal | no | null |
+| `SCHEDULED` | standing orders and direct debits, set up earlier and executed by the bank | no | null |
+| `INBOUND_EXTERNAL` | credit originated outside the bank (e.g. salary from an external employer account) | no | null |
+
+The invariant "every transaction is preceded by a successful login of the same account, device and IP within the session
+window" applies **only to `APP` and `WEB`**. ATM, POS, scheduled and inbound-external transactions have no login step in
+this model, and `device_id` / `ip_id` must be null for them (validated both ways). Online card-not-present payments are not
+modeled separately in Milestone 1.
+
+### Currency block
+
+`currency: {code: "SYN", minor_units_per_major: 100}`, one per dataset (decision 0001, S3). No per-row currency.
+
+### Training-label block (decision 0009)
+
+```yaml
+training_labels:
+  mode: include_immature        # or mature_only (ablation)
+  maturity_horizon_days: 48     # about the p95 of the default latency distribution
+  min_mature_train_days: 21     # validator: mature_only must leave at least this many days of training prediction times
+```
+
+Validators: `maturity_horizon_days` > 0; in `mature_only` mode the resulting mature training window must be at least
+`min_mature_train_days`, otherwise config loading raises (with the defaults this **fails for a 90-day simulation**, by
+design; see 0009).
 
 ## Sketch (illustrative, not final)
 
@@ -112,7 +145,9 @@ scenarios:
   - family: cycle
     is_ood_family: true
     ...
+currency: {code: SYN, minor_units_per_major: 100}
 label_knowledge: {regime: delayed, p_never_known: 0.10, latency_days: {kind: LogNormal, median: 14.0, sigma: 0.75}}
+training_labels: {mode: include_immature, maturity_horizon_days: 48, min_mature_train_days: 21}
 splits: {train_end_day: 60, val_end_day: 75, horizons_hours: [24, 168], ref_negative_fraction: 0.10}
 ```
 
