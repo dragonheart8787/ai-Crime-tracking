@@ -11,6 +11,7 @@ Nothing in this repository can be run at this stage.
 
 - Assessment and plan: [`docs/PHASE0_ASSESSMENT.md`](docs/PHASE0_ASSESSMENT.md)
 - Decision records: [`docs/decisions/`](docs/decisions/)
+- Experiment pre-registrations: [`docs/EXPERIMENTS.md`](docs/EXPERIMENTS.md)
 - Security and ethics: [`docs/SECURITY_AND_ETHICS.md`](docs/SECURITY_AND_ETHICS.md)
 - Standing project instructions: [`CLAUDE.md`](CLAUDE.md)
 

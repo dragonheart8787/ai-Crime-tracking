@@ -1,6 +1,6 @@
 # 0006: Rust evaluation for candidate components
 
-- Status: PROPOSED (awaiting review, Phase 0)
+- Status: ACCEPTED (Phase 0 review): overall deferral plan approved
 - Scope: the four candidates in `CLAUDE.md` section 10, plus one found during Phase 0
   (the balance settlement pass)
 

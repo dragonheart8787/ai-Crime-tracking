@@ -2,7 +2,15 @@
 
 - Date: 2026-09-26
 - Session type: cloud planning session (no GPU, allowlisted network). Planning and assessment only.
-- Status: **awaiting review**. No generator, feature, model or pipeline code exists.
+- Status: **revised after first review (Phase 0 revision pass, 2026-09-27); awaiting review of the
+  revision**. No generator, feature, model or pipeline code exists.
+
+Revision pass summary: stable 64-bit RNG keys and a `PYTHONHASHSEED` regression test (0002); precise
+canonical content hash (0001); `known_at` made load-bearing with a non-degenerate latency model (0004);
+`suspicious_prevalence` as a config parameter (0005); OOD scenario-family holdout pool redesigned (new 0009);
+single-scenario membership as named simplification S1 with per-instance parameter diversity (0002, 0005);
+gate feature set pre-registered in `docs/EXPERIMENTS.md`; `logins` event table added to schema, outputs and
+ER model (section 4.5).
 
 Conventions: anything not run is marked **NOT YET EVALUATED**. Statements from prior knowledge that
 were not verified in this session are marked *(unverified)*. The only things actually executed in this
@@ -20,6 +28,7 @@ Decision records referenced below live in `docs/decisions/`:
 | 0006 | Rust evaluation for candidate components |
 | 0007 | GPU environment target |
 | 0008 | Package layout and CLI entry point |
+| 0009 | Chronological splits and the OOD scenario-family holdout pool |
 
 ---
 
@@ -80,11 +89,13 @@ configs/ (Pydantic-validated YAML, 0005)
 simulation/  --(named RNG streams, 0002)-->  canonical tables (Parquet, Arrow schemas, 0001)
    |                                          transactions, logins, persons, accounts, devices,
    |                                          ips, atms, merchants, relations, labels,
-   |                                          event_labels, ground_truth_networks, metadata
+   |                                          event_labels, ground_truth_networks,
+   |                                          network_members, metadata
    v
 temporal/  TemporalStore (sealed) --as_of(t)--> AsOfView      (0003)
                                   --point_in_time(ids, ts)--> PITQuery primitives
-           splits: chronological, purged by H_max (0004)
+           splits: chronological, purged by H_max, known_at <= T_fit,
+                   OOD family pool + reference negatives (0004, 0009)
    |                                   |
    v                                   v
 validation/ (invariants, stats,     features/ (M2)  graph/ (M4)  sampler (M5+)
@@ -100,9 +111,9 @@ Key architectural properties:
 2. **One door to the data**: features, graph construction, samplers and splits read only through the
    `TemporalStore` API (0003). Ground-truth labels sit behind a separate `OracleLabels` object that
    only target builders and evaluation import; enforced by an import-boundary test.
-3. **Events are not only transactions.** Logins (account, device, IP, ts) are a separate event table.
-   Without it, `NEW_DEVICE_LOGIN` / `NEW_IP_LOGIN` and the Device/IP edges have no timestamps
-   (Challenge 4).
+3. **Events are not only transactions.** Logins (account, device, IP, ts, outcome) are a separate event
+   table sharing the global order `(ts, event_id)`. It is the timed source of LOGIN_WITH and USES_IP edges
+   and of `NEW_DEVICE_LOGIN` / `NEW_IP_LOGIN` (derived through the as-of view). Schema in section 4.5.
 4. **Relations are temporal**: OWNS_ACCOUNT, CONTROLS, USES_IP, etc. carry `valid_from` / `valid_to`.
    An account opened on day 40 is invisible on day 39.
 5. **Money is conserved explicitly**: external source/sink accounts (employers, billers, the outside
@@ -114,8 +125,10 @@ Two-stage design:
 
 1. **Intent generation** (vectorized, per named RNG stream): each normal person's archetype produces
    intended events (salary, rent, bills, card payments, ATM withdrawals, family transfers, logins);
-   each scenario instance produces intended events per its stochastic phase grammar; confounder
-   populations produce their own intents.
+   each scenario instance first draws its own instance parameters from the family's distributions, then
+   recruits members from its own recruitment cell (0002), then produces intended events per its
+   stochastic phase grammar; confounder populations produce their own intents. The number of active
+   instances follows from `suspicious_prevalence` (0005).
 2. **Settlement pass** (sequential, global order `(ts, event_id)`): applies each intent to a ledger,
    enforces each account's overdraft limit, marks failures as `status=DECLINED` (which is realistic
    and informative), writes `balance_before/after`.
@@ -138,16 +151,19 @@ entities unchanged" is defined precisely in 0002 as entities not touched by the 
 |---|---|---|---|
 | R1 | **Generator circularity**: the models learn the generator's script | Results do not transfer; "graph beats tabular" is true by construction | Difficulty knobs swept, not fixed; report performance curves over regimes; Bayes ceilings; claims phrased conditionally; optional external check on public data (M3+) |
 | R2 | **Temporal leakage** (future events, balances, labels, neighbors) | Inflated metrics, the primary methodological risk | As-of store (0003), metamorphic future-perturbation test, import-boundary test, purge gap, `known_at` labels |
-| R3 | **Label-knowledge leakage**: training on labels an institution would not yet know | Optimistic early-warning results | `known_at` column and training policy (0004); report oracle-label vs delayed-label regimes |
+| R3 | **Label-knowledge leakage**: training on labels an institution would not yet know | Optimistic early-warning results | `known_at` enforced in `known_labels()`, training-example construction and splits; non-degenerate latency by default; explicit test (0004, 0009); oracle regime only as a labeled ablation |
 | R4 | **Trivial separability** (a single feature or amount band gives it away) | Everything looks good, nothing is learned | Pre-registered non-triviality gates with both a ceiling and a floor (sections 5, 7) |
 | R5 | **Unlearnable data** (gates pushed too far, signal destroyed) | Null results caused by the generator, not the models | Floor gate; Bayes / oracle-feature ceiling showing signal exists |
 | R6 | **Garden of forking paths on the generator** (tuning the generator until later models look good) | Hidden researcher degrees of freedom | Calibration seeds separate from the locked research seed; generator frozen and versioned before any model milestone; any later generator change is a new dataset version with its own entry in `EXPERIMENTS.md` |
 | R7 | **Deterministic scenario scripts** make next-event prediction trivial | Next-event accuracy measures the script | Stochastic phase grammars; compute the generator's true conditional next-event distribution as the Bayes-optimal reference |
-| R8 | **Transductive memorization**: time split, but the same entities and networks appear in train and test | Models memorize IDs / embeddings | Report separately for networks that started before vs after the train cutoff; held-out families; no ID embeddings in baselines |
+| R8 | **Transductive memorization**: time split, but the same entities and networks appear in train and test | Models memorize IDs / embeddings | Report separately for networks that started before vs after the train cutoff; OOD family pool and reference negatives (0009); no ID embeddings in baselines |
 | R9 | **Evaluation variance**: few suspicious networks per split | Confidence intervals wider than differences between models | Cluster bootstrap over network instances; multiple generator seeds for final claims; enough instances in RESEARCH profile (power check before M3) |
 | R10 | **Dual-use drift** (generator knobs becoming evasion tools) | Violates 2.1 | Schema has shape-only parameters; no detector-in-the-loop; review checklist in `SECURITY_AND_ETHICS.md` |
 | R11 | **Environment** (Blackwell GPU + Windows + PyG extensions) | Blocks M5+ | Torch not needed until M5; verification plan in 0007; in-house sampler removes compiled-extension dependency |
 | R12 | **Scope creep** | Project never reaches the core comparison | Roadmap cuts in section 6 |
+| R13 | **Simplification S1 bias** (no overlapping scenario membership) | Networks are disjoint, which makes network detection easier than in reality | Named simplification (section 4.6); network-recovery results labeled "under S1"; revisit after Milestone 7 |
+| R14 | **Low positive counts at 1% prevalence** | DEV has only about 25 to 30 suspicious accounts; OOD families even fewer | DEV used for tests only; gates and all metrics at RESEARCH (or GATE) scale; power check before Milestone 3 |
+| R15 | **PU label noise from delayed labels** | Not-yet-known positives enter training as 0 | Intended realism; latent-positive count reported; oracle regime ablation quantifies the cost |
 
 ---
 
@@ -197,8 +213,20 @@ shape parameters only (0005).
 Additionally, a configurable fraction of scenario participants keeps its normal background activity,
 and scenario amounts are drawn from distributions overlapping normal amounts.
 
-**Held-out families**: families flagged `split_role: held_out` are excluded from training and used for
-out-of-distribution evaluation. Placement of their instances in time is an open question (Q3).
+**Prevalence**: `suspicious_prevalence` (share of internal accounts that are members of any scenario
+instance over the simulation) is a config parameter, default 0.01 in DEV and RESEARCH, intended to be swept
+later (0005, `EXPERIMENTS.md`).
+
+**Instance diversity**: every instance draws its own amount scale, timing offsets, phase durations,
+counterparty count, holding time and background-activity retention from its family's distributions; drawn
+values are stored in `ground_truth_networks`, and validation fails if a family's instances are near-identical
+(0005).
+
+**OOD holdout pool** (0009): a configured subset of families (`is_ood_family: true`) occurs across the full
+timeline like any other family, but its members are excluded from TRAIN and VAL for the whole timeline, its
+labels are never visible as known labels, and it is evaluated only in a separate OOD pool against a fixed
+reference pool of never-trained-on normal accounts. Temporal and pattern generalization are thereby
+measured separately (2 x 2 table in 0009).
 
 ### 4.2 Profiles (sizes to be confirmed, see Challenge 3)
 
@@ -207,6 +235,9 @@ out-of-distribution evaluation. Placement of their instances in time is an open 
 | DEV | 2K to 3K (proposed) | 90 | ~100K to 150K | tests, CI, fast iteration on CPU |
 | RESEARCH | ~100K | 90 | order of 10^7 (estimate, NOT YET EVALUATED) | main experiments |
 | LARGE | only with memory estimate | | | not planned before M12 |
+
+All profiles use `suspicious_prevalence = 0.01` by default. At DEV size that is roughly 25 to 30 suspicious
+accounts, enough for tests and the end-to-end integration run, not for any statistic (R14).
 
 Memory estimate for RESEARCH (back-of-envelope, NOT YET EVALUATED): ~25 columns, ~8 bytes average
 per value, 10^7 rows gives ~2 GB for transactions in memory, well within 64 GB.
@@ -228,6 +259,59 @@ realism, whether synthetic or real, and leakage risks. Only role: external sanit
 feature pipeline and baselines behave plausibly on data not produced by this generator. No citation
 details are given here because none were verified in this session.
 
+### 4.5 Output tables and entity-relationship model (planned schema)
+
+Parquet files, one per table (CSV via explicit export: same names with `.csv`). All times are int64 seconds
+since the simulation epoch; all money is int64 minor units (0001). Primary keys are the canonical sort keys
+used by the content hash.
+
+| Table | Primary key | Columns (planned) |
+|---|---|---|
+| `persons` | `person_id` | archetype, region, created_at |
+| `accounts` | `account_id` | account_kind (internal / external), owner_person_id (null for external), opened_at, closed_at (nullable), overdraft_limit_minor, region |
+| `devices` | `device_id` | device_kind, first_seen_at |
+| `ips` | `ip_id` | ip_context (household / public_wifi / corporate_nat / mobile_cgnat / residential_single), region |
+| `atms` | `atm_id` | region |
+| `merchants` | `merchant_id` | merchant_category, region |
+| `relations` | `(relation_type, src_id, dst_id, valid_from)` | relation_type in {OWNS_ACCOUNT, CONTROLS, USES_IP}, valid_to |
+| `transactions` | `event_id` | ts, txn_type, channel, src_account_id, dst_account_id (nullable), merchant_id (nullable), atm_id (nullable), amount_minor, currency, region, device_id (nullable), ip_id (nullable), login_event_id (nullable), status (SETTLED / DECLINED), src_balance_before_minor, src_balance_after_minor, dst_balance_before_minor, dst_balance_after_minor |
+| **`logins`** | `event_id` | ts, account_id, device_id, ip_id, channel (app / web), outcome (SUCCESS / FAILURE) |
+| `labels` | `(entity_type, entity_id, scenario_id, valid_from)` | see 0004 |
+| `event_labels` | `(event_table, event_id)` | see 0004 |
+| `ground_truth_networks` | `network_id` | see 0004 |
+| `network_members` | `(network_id, entity_type, entity_id)` | first_role, joined_ts |
+| `metadata.json` | | resolved config and its hash, seed, generator commit, package versions, per-table content hashes, dataset hash, per-file SHA-256, realized prevalence, recruitment shortfalls |
+
+Entity-relationship model (edge types from `CLAUDE.md` 5, with their timed source):
+
+| Edge | Source table | Time |
+|---|---|---|
+| OWNS_ACCOUNT (Person -> Account) | `relations` | `valid_from`, `valid_to` |
+| CONTROLS (Person -> Device) | `relations` | `valid_from`, `valid_to` |
+| USES_IP (Device -> IP) | `relations` (assignment) and `logins` (observed use) | interval; login ts |
+| LOGIN_WITH (Account -> Device) | **`logins`** | login ts |
+| TRANSFER_TO (Account -> Account) | `transactions` (txn_type transfer) | ts |
+| WITHDRAW_AT (Account -> ATM) | `transactions` (txn_type atm_withdrawal) | ts |
+| PAYS_MERCHANT (Account -> Merchant) | `transactions` (txn_type card / merchant payment) | ts |
+
+Invariants that tie the tables together (tested in Milestone 1): every digital-channel transaction references a
+successful login of the same account, device and IP within the configured session window before it; a login's
+device is controlled by the account owner at that time (except in configured shared-device scenarios and
+confounders); `NEW_DEVICE_LOGIN` / `NEW_IP_LOGIN` are derived from `logins` via the as-of view and never stored.
+
+### 4.6 Named Milestone 1 simplifications
+
+- **S1: single-scenario membership.** An account belongs to at most one suspicious scenario instance. As
+  designed (0002), the recruitment partition enforces this over the *whole simulation*, which is stricter than
+  "one active scenario at a time"; the stricter form is what keeps scenarios isolated for the reproducibility
+  requirement (see Q-R1). *Bias:* suspicious networks are vertex-disjoint, so connected-component and community
+  methods can separate networks more cleanly than in reality, where shared relays or cash-out points link
+  networks; network recall and alert-compression results will be optimistic. *Revisit:* after Milestone 7, by
+  allowing a configured share of members to join a second instance (which needs a coupling-aware isolation
+  test).
+- **S2: single currency** (unchanged from the first assessment).
+- **S3: network-level retrospective label knowledge** (0004): no partially known networks.
+
 ---
 
 ## 5. EVALUATION STRATEGY
@@ -236,11 +320,15 @@ details are given here because none were verified in this session.
 
 - Predictions are made at **prediction points** `(entity, t)`: a fixed cadence (e.g. daily snapshot)
   plus event-triggered points (after each observed event, for next-event tasks).
-- Chronological split on prediction time, e.g. days 1 to 60 / 61 to 75 / 76 to 90, with purge gap
-  >= `H_max` before validation and before test; training rows require `t + H_max <= train_end`.
+- Chronological split on prediction time, e.g. days 1 to 60 / 61 to 75 / 76 to 90, with a purge gap
+  >= `H_max` between consecutive sets (each set's last prediction time is `H_max` before its boundary),
+  full rules in 0009.
+- Training targets are built only from labels with `known_at <= T_fit` (0004); label-derived features at
+  any t use only labels with `known_at <= t`.
 - Neighborhoods, features and labels at `t` come only from the as-of view (0003).
-- Metrics are reported separately for (a) networks active across the train cutoff and (b) networks
-  that started after it (R8), and for (c) held-out families.
+- OOD families are evaluated only in the OOD pool, against the reference negative pool (0009).
+- ID test metrics are reported separately for (a) networks active across the train cutoff and (b) networks
+  that started after it (R8).
 
 ### 5.2 Primary and secondary metrics
 
@@ -274,22 +362,15 @@ details are given here because none were verified in this session.
 - A pre-registered minimum effect size to call a model better (proposed: non-overlapping CIs *and*
   consistent sign across all 3 seeds).
 
-### 5.5 Milestone 1 non-triviality gates (draft; to be finalized and pre-registered in `EXPERIMENTS.md` before the final dataset)
+### 5.5 Milestone 1 non-triviality gates
 
-Target for the probes: "account is in an active scenario phase at snapshot t" (and, secondarily,
-"has a high-risk event within H"). Features: ~20 simple per-account trailing-window aggregates
-computed through the as-of view. Probes are fit on calibration-seed train periods and scored on
-their validation periods.
-
-| Gate | Proposed criterion (draft) |
-|---|---|
-| G1 single feature | best single-feature PR-AUC (either sign) <= **0.30** at a prevalence of roughly 1% |
-| G2a shallow probe ceiling | logistic regression and depth-3 tree on per-account statics: PR-AUC <= **0.60** |
-| G2b signal floor | the same probe: PR-AUC >= **3 x prevalence** (otherwise the data may be unlearnable) |
-| G3 context contribution | report PR-AUC gain from adding 1-hop neighbor and temporal-order aggregates, with bootstrap CI. **Report only, not a gate** (making it a gate would tune the generator to favor the hypothesis) |
-| G4 confounder presence | among the probe's top-K false positives, the share coming from confounder archetypes is reported (report only) |
-
-The numbers above are placeholders for discussion; the user sets them (Q5).
+Pre-registered (as a draft to be frozen before the first gate run) in `docs/EXPERIMENTS.md`, experiment
+**EXP-M1-G**: exact 30-feature single-account set (including total transaction amount, transaction count,
+in-degree, out-degree and average holding time, each with a precise definition), fixed probe
+hyperparameters, calibration seeds 1000 to 1004, RESEARCH (or GATE) profile, and the criteria:
+single-feature AP <= 0.30; shallow-probe AP <= 0.60 and >= 3 x point prevalence; context contribution and
+confounder share reported, not gated. Numbers unchanged from the first draft; the weakness of the `3 x pi`
+floor at low prevalence is noted there.
 
 ---
 
@@ -326,19 +407,23 @@ In scope:
 3. Entities and temporal relations: persons, accounts, devices, IPs, ATMs, merchants, external
    accounts; OWNS_ACCOUNT, CONTROLS, USES_IP, LOGIN_WITH with validity intervals.
 4. Normal archetypes and confounders (section 4.1).
-5. Scenario families with stochastic phase grammars, `enabled` and `split_role` per family.
+5. Scenario families with stochastic phase grammars, `enabled`, `weight`, `max_instances` and
+   `is_ood_family` per family; per-instance parameters drawn from family distributions; instance count
+   derived from `suspicious_prevalence`; recruitment partition enforcing S1 (0002, 0005).
 6. Settlement pass with overdraft rule, declined status and balances.
-7. Outputs: `transactions`, `logins`, `accounts`, `persons`, `devices`, `ips`, `atms`, `merchants`,
-   `relations`, `labels`, `event_labels`, `ground_truth_networks`, `metadata.json` (Parquet primary,
-   CSV on request).
+7. Outputs (schema in 4.5): `transactions`, **`logins`**, `accounts`, `persons`, `devices`, `ips`, `atms`,
+   `merchants`, `relations`, `labels`, `event_labels`, `ground_truth_networks`, `network_members`,
+   `metadata.json` (Parquet primary, CSV on request). Label tables carry `known_at` drawn from the
+   non-degenerate latency model (0004).
 8. `TemporalStore` / `AsOfView` / `PITQuery` minimal versions (enough for splits, probes and leakage
    tests).
-9. Chronological split utility with purge gap.
+9. Split utility (0009): chronological TRAIN / VAL / TEST with purge gap, `known_at <= T_fit` for
+   training targets, OOD family pool and reference negative pool.
 10. Validation: invariants, heterogeneity statistics, non-triviality probes, EDA report generated from
     computed numbers only.
 11. CLI `simulate`, `validate`, `eda`.
-12. Docs: README reproduction commands, `DATA.md`, `EXPERIMENTS.md` (gate pre-registration),
-    `ARCHITECTURE.md`, `LIMITATIONS.md`.
+12. Docs: README reproduction commands, `DATA.md`, `EXPERIMENTS.md` (freeze EXP-M1-G before the first
+    gate run, then log iterations), `ARCHITECTURE.md`, `LIMITATIONS.md` (S1 to S3 recorded there).
 
 Invariants to test (definitions):
 
@@ -353,8 +438,16 @@ Invariants to test (definitions):
   relation that connects them.
 - Labels: interval invariants from 0004; every scenario event has an `event_labels` row; at most one
   terminal event per network.
-- Reproducibility: same seed gives same content hash; different seeds differ; toggling a scenario
-  leaves untouched entities' events identical by `event_id`.
+- Logins: every digital-channel transaction references a successful login of the same account, device and
+  IP within the session window before it.
+- Reproducibility: same seed gives same content hash, also across fresh subprocesses with different
+  `PYTHONHASHSEED`; different seeds differ; disabling a family leaves other instances and untouched
+  entities identical by `event_id` (exact guarantee in 0002); content hash equal across polars and pyarrow
+  write paths (0001).
+- Prevalence: realized prevalence within tolerance of `suspicious_prevalence`; no recruitment shortfall above
+  the configured maximum; instance-parameter diversity above the configured floor.
+- Label knowledge: latency distribution non-degenerate (config validator); the `known_at` exclusion test
+  (0004); OOD exclusion tests (0009).
 - Leakage: adversarial and metamorphic tests from 0003.
 
 Out of scope: any trained model beyond the probes, feature pipeline beyond probe features, graph
@@ -364,8 +457,11 @@ construction, torch.
 
 ## 8. EXACT FILES I PLAN TO CREATE OR MODIFY (when implementation starts, after approval)
 
-Created in this Phase 0 session: `CLAUDE.md`, `README.md`, `.gitignore`,
+Created in the first Phase 0 session: `CLAUDE.md`, `README.md`, `.gitignore`,
 `docs/PHASE0_ASSESSMENT.md`, `docs/SECURITY_AND_ETHICS.md`, `docs/decisions/0001` to `0008`.
+Created or rewritten in the revision pass: `docs/EXPERIMENTS.md` (new), `docs/decisions/0009` (new),
+`0001`, `0002`, `0004`, `0005` (rewritten), `0003`, `0006`, `0007`, `0008` (status / small alignment edits),
+this document.
 
 Planned for Milestone 1 (subject to change after review; each is a small module):
 
@@ -383,7 +479,7 @@ src/fcip/cli.py                     # simulate | validate | eda
 src/fcip/config/generator.py        # Pydantic models (0005)
 src/fcip/config/loader.py           # YAML load + overlay merge + resolved-config hash
 src/fcip/common/errors.py           # FutureAccessError, InvariantViolation, ConfigError
-src/fcip/common/rng.py              # named streams (0002)
+src/fcip/common/rng.py              # stable_key (blake2b-64), named streams (0002)
 src/fcip/common/ids.py              # namespaced int64 ids
 src/fcip/common/timebase.py         # epoch, calendar anchor, interval helpers
 src/fcip/common/hashing.py          # canonical content hash (0001)
@@ -396,18 +492,20 @@ src/fcip/simulation/archetypes/{__init__,base,salary_worker,student,small_busine
                                 hf_merchant,traveler,family,spending_surge,
                                 high_volume_business}.py
 src/fcip/simulation/confounders.py
+src/fcip/simulation/recruitment.py  # rendezvous recruitment partition (0002, S1)
 src/fcip/simulation/scenarios/{__init__,base,phases,fan_in,fan_out,pass_through,burst,
                                dormant_activation,multi_hop,cycle,structuring_like,
                                shared_infrastructure,account_to_cash}.py
 src/fcip/simulation/logins.py
 src/fcip/simulation/settlement.py   # ledger pass (0006 a')
-src/fcip/simulation/labels.py       # labels, event_labels, ground_truth_networks
+src/fcip/simulation/labels.py       # labels, event_labels, ground_truth_networks, network_members
+src/fcip/simulation/label_knowledge.py  # network-level known_at model (0004)
 src/fcip/simulation/generator.py    # orchestration only
 src/fcip/simulation/metadata.py
 src/fcip/temporal/store.py          # TemporalStore (0003)
 src/fcip/temporal/asof.py           # AsOfView, FullHistoryView (EDA only)
 src/fcip/temporal/pit.py            # PITQuery primitives
-src/fcip/temporal/splits.py         # chronological purged splits
+src/fcip/temporal/splits.py         # build_example_index: TRAIN/VAL/TEST, OOD pool, E_ref (0009)
 src/fcip/labels/oracle.py           # OracleLabels, target builder
 src/fcip/validation/invariants.py
 src/fcip/validation/stats.py        # heterogeneity statistics
@@ -416,27 +514,34 @@ src/fcip/validation/eda.py          # writes reports/eda_milestone1.md
 
 tests/conftest.py                   # tiny-profile fixtures
 tests/unit/test_config.py
-tests/unit/test_rng.py
+tests/unit/test_rng.py              # stable keys, collision registry, no built-in hash()
+tests/unit/test_recruitment.py      # partition properties
 tests/unit/test_ids.py
-tests/unit/test_hashing.py
+tests/unit/test_hashing.py          # incl. polars vs pyarrow write paths give equal content hash
 tests/unit/test_schemas.py
 tests/unit/test_settlement.py       # conservation, overdraft, declined
 tests/unit/test_scenarios.py        # per-family shape and causality
 tests/unit/test_labels.py           # interval invariants, phase-dependent roles
 tests/unit/test_asof.py             # API semantics
 tests/unit/test_pit.py              # Hypothesis vs brute-force oracle
-tests/unit/test_splits.py
+tests/unit/test_splits.py           # purge, OOD exclusion, E_ref disjointness
+tests/unit/test_label_knowledge.py  # latency non-degenerate, validators
+tests/unit/test_logins.py           # login/transaction session invariant
 tests/unit/test_metrics_sanity.py   # PR-AUC etc. on known cases
 tests/leakage/test_adversarial_asof.py
 tests/leakage/test_future_perturbation.py
 tests/leakage/test_import_boundaries.py
+tests/leakage/test_known_at.py      # delayed-label exclusion case (0004)
+tests/leakage/test_ood_labels_hidden.py
 tests/reproducibility/test_seed_determinism.py
+tests/reproducibility/test_pythonhashseed.py   # fresh subprocesses, different PYTHONHASHSEED
+tests/reproducibility/test_prevalence.py
 tests/reproducibility/test_scenario_isolation.py
 tests/integration/test_dev_end_to_end.py
 
 docs/ARCHITECTURE.md
 docs/DATA.md
-docs/EXPERIMENTS.md                 # M1 gate pre-registration first
+docs/EXPERIMENTS.md                 # exists (draft EXP-M1-G); frozen before first gate run
 docs/LIMITATIONS.md
 docs/ROADMAP.md
 docs/ENVIRONMENT.md                 # local verification results (filled on the laptop)
@@ -460,6 +565,19 @@ All exploratory, in a scratch virtualenv outside the repository; nothing here is
    pyarrow vs polars same bytes: False
    spawn child stable across spawn counts: True
    explicit spawn_key == spawn()[7]: True
+   ```
+
+Revision pass (same scratch virtualenv):
+
+5. 64-bit blake2b spawn keys under three `PYTHONHASHSEED` values (0, 1, 12345): identical streams, while
+   built-in `hash("scenario")` differed each time (output in 0002).
+6. Prototype of `fcip-content-hash-v1` on a 50K-row table written by pyarrow (zstd) and by polars
+   (snappy, shuffled rows):
+   ```
+   file bytes equal: False
+   polars read-back types: ['int64', 'int64', 'int64', 'large_string']
+   content hash equal: True
+   one-value change detected: True
    ```
 
 Everything else in this document is design, and every performance figure is an estimate that is
@@ -501,18 +619,22 @@ reproducibility with the numpy RNG streams.
 
 | Topic | Recommendation | Main rejected alternative |
 |---|---|---|
-| Dataframe / storage (0001) | polars + explicit Arrow schemas + Parquet; dataset identity = canonical content hash | pandas primary; file-byte hashing (verified writer-dependent) |
-| RNG streams (0002) | `SeedSequence(seed, spawn_key=stable_hash(name path))`, per-entity and per-scenario-instance streams, namespaced IDs | positional `spawn(n)`; global counters |
+| Dataframe / storage (0001) | polars + explicit Arrow schemas + Parquet; money as int64 minor units; dataset identity = `fcip-content-hash-v1` (cast to schema, sort by full PK, fixed byte encoding) | pandas primary; file-byte hashing; Arrow IPC bytes |
+| RNG streams (0002) | `SeedSequence(seed, spawn_key=(blake2b-64 keys of name path))`, per-entity and per-instance streams, namespaced IDs, rendezvous recruitment partition, `PYTHONHASHSEED` regression test | built-in `hash()`; positional `spawn(n)`; global counters; sequential recruitment |
 | As-of view (0003) | sealed `TemporalStore`, frozen single-cutoff `AsOfView` that raises on future reads, vetted `PITQuery` primitives, separate `OracleLabels`, metamorphic + adversarial + import-boundary tests | filtered dataframes by convention; SQL views |
-| Labels / time (0004) | int64 seconds from epoch, half-open intervals, interval `labels` with phase-derived roles and `known_at`, `event_labels` with terminal flag, censoring | final-role point labels |
-| Generator config (0005) | Pydantic v2 (`extra=forbid`, frozen) + YAML overlays, typed distributions, shape-only scenario params | Hydra now |
+| Labels / time (0004) | int64 seconds, half-open intervals, phase-derived roles, `known_at` from network-level LogNormal(median 14 d, sigma 0.75) latency with `p_never_known` 0.10, enforced everywhere labels are used | final-role labels; per-row latencies; zero-latency default; dropping unknown positives |
+| Generator config (0005) | Pydantic v2 (`extra=forbid`, frozen) + YAML overlays, typed distributions, shape-only scenario params, `suspicious_prevalence`, per-instance parameter distributions, `is_ood_family` | Hydra now |
 | Language policy (0006) | see section 10 | Rust from the start |
 | Environment (0007) | see section 11 | assuming latest torch works with a CUDA 12.8 driver |
 | Layout / CLI (0008) | `src/fcip`, `python -m fcip.cli simulate --profile dev --seed 42` | `python -m src.cli` |
+| Splits / OOD (0009) | OOD families across the whole timeline, excluded from TRAIN/VAL by family, labels never known, evaluated in an OOD pool against a reference negative pool | OOD confined to after validation; unspecified masking |
 
 ---
 
 ## 13. Challenges to the spec
+
+Status after the first review is marked in brackets: [RESOLVED] means a decision was taken and folded
+into the records; [OPEN] means no decision yet.
 
 1. **Circularity of synthetic evidence (methodologically weak as stated).** "Graph and temporal context
    must matter" is a generator design goal, so demonstrating that graph models win on this generator is
@@ -529,22 +651,24 @@ reproducibility with the numpy RNG streams.
    ~10 transactions per account, too sparse for a salary worker archetype (salary, rent, bills, card
    payments are already dozens per month), so archetypes cannot be heterogeneous and scenarios drown.
    *Proposal*: DEV = ~2K to 3K accounts, 90 days, ~100K to 150K transactions (or 10K accounts over 30
-   days). Final numbers after measuring the per-archetype rates (Q2).
+   days). Final numbers after measuring the per-archetype rates (Q2). [OPEN]
 
 4. **Missing event table.** The event taxonomy has NEW_DEVICE_LOGIN, NEW_IP_LOGIN and the edge list has
    LOGIN_WITH and USES_IP, but the M1 output list has no login/session table, so those edges would have
    no timestamps and those events could not exist. *Proposal*: add `logins` and a `relations` table
-   with validity intervals.
+   with validity intervals. [RESOLVED: `logins` added to schema, outputs and ER model, section 4.5]
 
 5. **Label knowledge time is missing.** Phase-derived labels at t are ground truth, but an institution
    learns them later, if at all. Training on labels not yet known at fit time is a leak that the purge
    gap does not cover. *Proposal*: `known_at` (0004) plus a training-label policy, with a zero-delay
-   setting to recover the oracle regime and measure the difference.
+   setting to recover the oracle regime and measure the difference. [RESOLVED: 0004 rewritten; `known_at`
+   enforced in splits, training targets and label-derived features; non-degenerate default latency]
 
 6. **"Byte-identical data" is the wrong reproducibility criterion.** Verified in this session: Parquet
    bytes differ between writers (pyarrow vs polars) for identical content, and file footers embed the
    writer version. *Proposal*: canonical content hash as dataset identity; file hashes recorded and
-   asserted stable only within one pinned environment.
+   asserted stable only within one pinned environment. [RESOLVED: algorithm specified in 0001, with a
+   cross-writer test]
 
 7. **"Early-warning lead time" as headline metric is undefined** until an alert budget and a treatment
    of never-alerted and censored networks are fixed; any lead time can be achieved with enough alerts.
@@ -558,17 +682,20 @@ reproducibility with the numpy RNG streams.
 9. **Non-triviality gates need a floor, not only a ceiling,** otherwise a generator emitting noise
    passes. Iterating the generator until gates pass is also a garden-of-forking-paths risk.
    *Proposal*: G2b floor gate; calibration seeds disjoint from research seeds; generator frozen before
-   any model milestone.
+   any model milestone. [RESOLVED: floor kept; exact feature set and
+   procedure pre-registered in `EXPERIMENTS.md`]
 
 10. **Held-out scenario families are ambiguous in a chronological split.** If a held-out family occurs
     in the train period and its accounts are labeled NORMAL for training, that is label noise; if it
     is removed from the world, the world differs between experiments. *Proposal* (Q3): schedule held-out
     instances to start after the validation boundary, and mask any overlap from training loss.
+    [RESOLVED differently: both options rejected in review; OOD pool design in 0009]
 
 11. **Role taxonomy overlaps and changes over time.** CASH_OUT_RISK (role) and ATM_WITHDRAWAL (event)
     overlap; one account can be AGGREGATOR then DISTRIBUTOR within a network; an account can be in two
     scenarios. *Proposal*: phase-dependent multi-label roles with a configured precedence for
-    single-label views (Q4).
+    single-label views (Q4). [RESOLVED for M1: single-scenario membership (S1), so roles are single-valued at
+    any t; the CASH_OUT_RISK vs ATM_WITHDRAWAL overlap remains a naming issue to settle in `DATA.md`]
 
 12. **Scope is too large for the research value of some items.** Six temporal-GNN families, three
     multi-task weighting schemes and homogeneous-vs-heterogeneous comparisons on synthetic data will cost
@@ -604,16 +731,28 @@ reproducibility with the numpy RNG streams.
 
 ## 14. Open questions for the reviewer
 
-- **Q1** Environment: what does `nvidia-smi` report on the laptop (driver version, "CUDA Version")? This
-  decides cu128 (torch 2.9.1) versus cu130 (latest torch).
-- **Q2** DEV profile size: accept ~2K to 3K accounts over 90 days, or 10K accounts over 30 days?
-- **Q3** Held-out families: schedule them after the validation boundary (recommended), or allow them
-  anywhere and mask?
-- **Q4** Concurrent scenarios / roles: allow an account in more than one scenario (multi-label roles), or
-  forbid overlap in M1 for simplicity?
-- **Q5** Gate thresholds: accept the draft values in 5.5 as a starting point for pre-registration, or set
-  your own?
-- **Q6** Investigation delay (`known_at`): include in M1 output (recommended, cheap) even though it is
-  only used from M3?
-- **Q7** Package name `fcip`: acceptable?
-- **Q8** Prevalence target: roughly 1% of accounts involved in scenarios over 90 days, or another value?
+Resolved in the first review: former Q3 (held-out families: replaced by the OOD pool, 0009), Q4 (single
+membership, S1), Q5 (gate numbers kept), Q6 (`known_at` included and enforced), Q7 (`fcip`), Q8
+(`suspicious_prevalence` = 0.01, configurable).
+
+Still open:
+
+- **Q1** Environment: `nvidia-smi` output on the laptop (driver version, "CUDA Version"). Deferred by the
+  reviewer to before Milestones 3 to 5.
+- **Q2** DEV profile size: about 2K to 3K accounts over 90 days, or 10K accounts over 30 days? Not answered
+  in the review. Note that at 1% prevalence either choice gives only tens of suspicious accounts (R14).
+
+New in the revision pass:
+
+- **Q-R1** S1 strictness: the recruitment partition makes membership single-scenario over the *whole
+  simulation*, not just "one active scenario at a time" as requested, because sequential re-recruitment would
+  couple instances and break the isolation requirement. Accept the stricter form for Milestone 1?
+- **Q-R2** Not-yet-known positives are kept in training as 0 (positive-unlabeled), not dropped, because dropping
+  them requires the oracle. The revision prompt said such examples are "excluded from training"; this design
+  excludes them from the *positive* set only. Confirm this reading.
+- **Q-R3** Default latency LogNormal(median 14 days, sigma 0.75) and `p_never_known` 0.10 are assumptions chosen
+  for a 90-day simulation, not calibrated to real data. Acceptable as defaults?
+- **Q-R4** Gate profile: gates run on RESEARCH, or a 25K-account GATE profile if RESEARCH generation exceeds 15
+  minutes (decided on runtime only, before results). Acceptable?
+- **Q-R5** Gate probes are trained on oracle targets (strongest case, conservative for the ceilings). Acceptable?
+- **Q-R6** The revision prompt referenced `CLAUDE.md` "section 56"; I assumed section 8 (distribution shift). Correct?

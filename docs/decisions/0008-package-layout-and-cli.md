@@ -1,6 +1,6 @@
 # 0008: Package layout and CLI entry point
 
-- Status: PROPOSED (awaiting review, Phase 0)
+- Status: ACCEPTED (Phase 0 review): package name `fcip` approved
 
 ## Problem
 

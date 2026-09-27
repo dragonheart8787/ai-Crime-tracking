@@ -1,6 +1,6 @@
 # 0007: GPU environment target (torch / CUDA / PyTorch Geometric on Windows)
 
-- Status: PROPOSED. **NOT YET EVALUATED — requires verification on the local GPU machine before
+- Status: PROPOSED, unchanged in the Phase 0 revision pass. **NOT YET EVALUATED — requires verification on the local GPU machine before
   Milestone 3+** (in practice torch is first needed at Milestone 5; see below).
 - Target machine: Windows laptop, RTX 5070 Ti (12 GB), 64 GB RAM, Python 3.11, "CUDA 12.8".
 
