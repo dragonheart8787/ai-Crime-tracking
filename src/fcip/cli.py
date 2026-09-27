@@ -1,6 +1,6 @@
 """Command-line entry point: ``python -m fcip.cli <command>``.
 
-Commands implemented at Milestone 1 checkpoint 1: ``simulate``, ``validate``, ``sanity``, ``export-csv``.
+Commands: ``simulate``, ``validate``, ``sanity``, ``eda``, ``gate``, ``export-csv``.
 """
 
 from __future__ import annotations
@@ -57,12 +57,16 @@ def _validate(args: argparse.Namespace) -> int:
             f"dataset hash mismatch: metadata {meta['dataset_hash']} recomputed {recomputed}", file=sys.stderr
         )
         return 1
-    cfg = meta["config"]
+    from fcip.config.generator import GeneratorConfig
+
+    cfg = GeneratorConfig.model_validate(meta["config"])
     ran = check_all(
         tables,
         sim_end=meta["sim_end"],
-        session_window=cfg["infrastructure"]["session_window_seconds"],
-        high_risk_phases=cfg["high_risk_phases"],
+        session_window=cfg.infrastructure.session_window_seconds,
+        high_risk_phases=[p.value for p in cfg.high_risk_phases],
+        min_cv=cfg.validation.min_instance_amount_cv,
+        min_instances=cfg.validation.min_instances_for_cv,
     )
     print(
         json.dumps(
@@ -76,6 +80,33 @@ def _sanity(args: argparse.Namespace) -> int:
     from fcip.validation.sanity import summarize
 
     print(json.dumps(summarize(Path(args.data)), indent=2, default=str))
+    return 0
+
+
+def _eda(args: argparse.Namespace) -> int:
+    from fcip.validation.eda import write_report
+
+    print(write_report(Path(args.data), Path(args.out)))
+    return 0
+
+
+def _gate(args: argparse.Namespace) -> int:
+    from fcip.validation.gate import evaluate, run_seed
+
+    results = []
+    for d in args.data:
+        t0 = time.perf_counter()
+        r = run_seed(Path(d), ref_pool_method=args.ref_pool_method)
+        r["seconds"] = round(time.perf_counter() - t0, 1)
+        results.append(r)
+        print(
+            json.dumps({"seed": r["seed"], "G1": r["G1"]["best_ap"], "G2": r["G2"], "pi": r["pi"]}),
+            flush=True,
+        )
+    out = {"experiment": "EXP-M1-G", "per_seed": results, "criteria": evaluate(results)}
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
+    print(json.dumps(out["criteria"], indent=2))
     return 0
 
 
@@ -103,6 +134,16 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("sanity", help="print the data-shape sanity summary")
     p.add_argument("--data", required=True)
     p.set_defaults(fn=_sanity)
+    p = sub.add_parser("eda", help="write the Milestone 1 EDA report for a dataset")
+    p.add_argument("--data", required=True)
+    p.add_argument("--out", default="reports/eda_milestone1.md")
+    p.set_defaults(fn=_eda)
+    p = sub.add_parser("gate", help="run the pre-registered EXP-M1-G gates on calibration-seed datasets")
+    p.add_argument("--data", required=True, nargs="+", help="one dataset directory per calibration seed")
+    p.add_argument("--out", default="reports/gate_exp_m1_g.json")
+    p.add_argument("--ref-pool-method", default=None, choices=["none_cell_hash", "stratified_archetype"],
+                   help="override the reference-pool method (A2 decision rule, EXPERIMENTS.md freeze item 6)")
+    p.set_defaults(fn=_gate)
     p = sub.add_parser("export-csv", help="export every table of a dataset as CSV")
     p.add_argument("--data", required=True)
     p.set_defaults(fn=_export)

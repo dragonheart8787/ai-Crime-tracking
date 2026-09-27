@@ -134,3 +134,83 @@ class EventLog:
             idx = tk if name.startswith("t_") else lk
             setattr(out, name, [src[i] for i in idx])
         return out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Compact storage. Python lists of ints cost about 40 bytes per value; at RESEARCH scale (about 3e7 events)
+# that does not fit in memory, so logs are converted to numpy columns in batches. Enumerated string columns
+# become int8 codes; nullable integer columns use -1 as the null sentinel (all IDs are non-negative).
+# ---------------------------------------------------------------------------------------------------------
+TXN_TYPES: tuple[str, ...] = tuple(t.value for t in TxnType)
+CHANNELS: tuple[str, ...] = tuple(c.value for c in Channel)
+PHASES: tuple[str, ...] = tuple(p.value for p in Phase)
+EVENT_TYPES: tuple[str, ...] = tuple(e.value for e in EventType)
+OUTCOMES: tuple[str, ...] = tuple(o.value for o in LoginOutcome)
+NULL = -1
+
+_T_INT = (
+    "t_event_id",
+    "t_ts",
+    "t_src",
+    "t_dst",
+    "t_merchant",
+    "t_atm",
+    "t_amount",
+    "t_region",
+    "t_device",
+    "t_ip",
+    "t_login",
+    "t_depends_on",
+    "t_network",
+)
+_T_CODE = {"t_type": TXN_TYPES, "t_channel": CHANNELS, "t_phase": PHASES, "t_event_type": EVENT_TYPES}
+_L_INT = ("l_event_id", "l_ts", "l_account", "l_device", "l_ip", "l_network")
+_L_CODE = {"l_channel": CHANNELS, "l_outcome": OUTCOMES, "l_phase": PHASES, "l_event_type": EVENT_TYPES}
+
+
+def _codes(values: list[str | None], vocab: tuple[str, ...]) -> np.ndarray:
+    index = {v: i for i, v in enumerate(vocab)}
+    return np.fromiter((NULL if v is None else index[v] for v in values), dtype=np.int8, count=len(values))
+
+
+def _ints(values: list[int | None]) -> np.ndarray:
+    return np.fromiter((NULL if v is None else v for v in values), dtype=np.int64, count=len(values))
+
+
+@dataclass
+class EventArrays:
+    """Numpy-column form of :class:`EventLog` (same field names)."""
+
+    cols: dict[str, np.ndarray]
+
+    @classmethod
+    def from_log(cls, log: EventLog) -> EventArrays:
+        cols: dict[str, np.ndarray] = {}
+        for name in _T_INT + _L_INT:
+            cols[name] = _ints(getattr(log, name))
+        for name, vocab in {**_T_CODE, **_L_CODE}.items():
+            cols[name] = _codes(getattr(log, name), vocab)
+        return cls(cols)
+
+    @classmethod
+    def concat(cls, parts: list[EventArrays]) -> EventArrays:
+        if not parts:
+            return cls.from_log(EventLog())
+        return cls({k: np.concatenate([p.cols[k] for p in parts]) for k in parts[0].cols})
+
+    @property
+    def n_txn(self) -> int:
+        return len(self.cols["t_event_id"])
+
+    @property
+    def n_login(self) -> int:
+        return len(self.cols["l_event_id"])
+
+    def filter(self, keep_txn: np.ndarray, keep_login: np.ndarray) -> EventArrays:
+        return EventArrays(
+            {k: (v[keep_txn] if k.startswith("t_") else v[keep_login]) for k, v in self.cols.items()}
+        )
+
+
+def decode(codes: np.ndarray, vocab: tuple[str, ...]) -> list[str | None]:
+    return [None if c == NULL else vocab[c] for c in codes.tolist()]

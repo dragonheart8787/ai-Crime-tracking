@@ -34,6 +34,12 @@ Three things are separated:
 family, phase, is_ood_family, known_at (nullable)`
 
 - Before its first scenario activity an entity has no scenario row; it is NORMAL.
+- **Interval start (A1, Milestone 1 checkpoint 2):** a member's label rows start at its own first observable event
+  in the network (a transaction it sends or receives, settled or declined, or a login), never at an earlier
+  network phase boundary. Phase intervals ending at or before that event are dropped, the interval containing it
+  starts at it, and later intervals keep their phase start (the account's own history already shows
+  participation). A member without an own event has no label rows. Measured effect: DEV seed 42, 46 of 111 rows
+  start later (median 4.9 h, maximum 31.5 h), none dropped.
 - Role at t is derived from the phase at t. Milestone 1 forbids membership in more than one scenario
   instance at a time (S1), and in fact in at most one instance for the whole simulation (S2, decision 0002), so
   the point-in-time role is single-valued. Role changes *within* one network (e.g. AGGREGATOR then DISTRIBUTOR) are
@@ -70,7 +76,13 @@ For each network n (its own RNG stream, decision 0002):
 2. Otherwise draw a latency `L_n` from the configured distribution. Default:
    **LogNormal with median 14 days and sigma 0.75** (in log-days), which gives roughly a 5th percentile of
    4 days and a 95th of 48 days.
-3. Anchor `A_n` = timestamp of the terminal event, or of the last scenario event if the network is censored.
+3. Anchor `A_n` = the latest of: the terminal event, the network's last scenario event of any status (declined
+   attempts and logins are observable activity), and the start of the network's latest label interval.
+   (Revised at Milestone 1 checkpoint 2. The earlier rule, "terminal event, or last *settled* event if censored",
+   was found by the invariant check on the first RESEARCH run to allow a label row to start after `known_at`: after
+   A1, a member's labels start at its first own event, which can be a declined attempt after the anchor, and a HOLD
+   row can start after the network's last event. With the revised anchor, detection never precedes any observed
+   activity or labelled state of the network.)
 4. Detection time `D_n = A_n + L_n`. If `D_n >= sim_end`, the network is not detected within the simulation
    (`known_at = null`, `detected = false`).
 5. Every `labels`, `event_labels` and `ground_truth_networks` row of n gets `known_at = D_n`. Hence for every

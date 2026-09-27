@@ -26,7 +26,9 @@ def test_dev_profile_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert set(meta["file_sha256"]) == set(TABLE_NAMES)
     assert main(["validate", "--data", str(out)]) == 0
     val = json.loads(capsys.readouterr().out)
-    assert val["hash_matches_metadata"] and len(val["checks_passed"]) == 10
+    from fcip.validation.invariants import CHECKS
+
+    assert val["hash_matches_metadata"] and val["checks_passed"] == list(CHECKS)
     # every family appears in DEV (min_instances: 1), including the OOD-designated ones
     assert set(meta["activation"]) == {
         "fan_in",

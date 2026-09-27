@@ -271,10 +271,22 @@ class SplitsCfg(Strict):
     val_end_day: float = Field(gt=0)
     horizons_hours: list[float] = Field(min_length=1)
     ref_negative_fraction: float = Field(gt=0, lt=1)
+    ref_pool_method: str = "none_cell_hash"  # or "stratified_archetype" (decision 0009, A2)
+
+    @model_validator(mode="after")
+    def _method(self) -> SplitsCfg:
+        if self.ref_pool_method not in ("none_cell_hash", "stratified_archetype"):
+            raise ValueError(f"unknown ref_pool_method {self.ref_pool_method}")
+        return self
 
     @property
     def h_max_days(self) -> float:
         return max(self.horizons_hours) / 24.0
+
+
+class ValidationCfg(Strict):
+    min_instance_amount_cv: float = Field(default=0.1, ge=0)  # decision 0005: instances must not be templates
+    min_instances_for_cv: int = Field(default=3, ge=2)
 
 
 class GeneratorConfig(Strict):
@@ -291,6 +303,7 @@ class GeneratorConfig(Strict):
     label_knowledge: LabelKnowledgeCfg
     training_labels: TrainingLabelsCfg
     splits: SplitsCfg
+    validation: ValidationCfg = ValidationCfg()
 
     @model_validator(mode="after")
     def _cross(self) -> GeneratorConfig:

@@ -17,71 +17,83 @@ from dataclasses import dataclass
 import numpy as np
 
 from fcip.common.errors import InvariantViolation
-from fcip.common.taxonomy import Status
+
+SETTLED_CODE = 0
+DECLINED_CODE = 1
+STATUS_VOCAB: tuple[str, ...] = ("SETTLED", "DECLINED")
+_CHUNK = 500_000
 
 
 @dataclass
 class Settled:
     order: np.ndarray  # permutation of the input rows into global order
-    status: np.ndarray  # object array of Status values, input row order
+    status: np.ndarray  # int8 codes into STATUS_VOCAB, input row order
     src_before: np.ndarray
     src_after: np.ndarray
     dst_before: np.ndarray
     dst_after: np.ndarray
     final_balance: dict[int, int]
 
+    def status_str(self) -> list[str]:
+        return [STATUS_VOCAB[c] for c in self.status.tolist()]
+
 
 def settle(
-    event_id: list[int],
-    ts: list[int],
-    src: list[int],
-    dst: list[int],
-    amount: list[int],
-    depends_on: list[int],
+    event_id: np.ndarray | list[int],
+    ts: np.ndarray | list[int],
+    src: np.ndarray | list[int],
+    dst: np.ndarray | list[int],
+    amount: np.ndarray | list[int],
+    depends_on: np.ndarray | list[int],
     initial_balance: dict[int, int],
     overdraft_limit: dict[int, int | None],
 ) -> Settled:
-    n = len(event_id)
-    eid = np.asarray(event_id, dtype=np.int64)
-    tsa = np.asarray(ts, dtype=np.int64)
-    if len(np.unique(eid)) != n:
+    eid_a = np.asarray(event_id, dtype=np.int64)
+    n = len(eid_a)
+    if len(np.unique(eid_a)) != n:
         raise InvariantViolation("duplicate transaction event ids before settlement")
-    order = np.lexsort((eid, tsa))
+    order = np.lexsort((eid_a, np.asarray(ts, dtype=np.int64)))
+    dep_a = np.asarray(depends_on, dtype=np.int64)
+    needed = set(dep_a[dep_a != -1].tolist())  # only these events' outcomes must be remembered
+    src_a, dst_a, amt_a = np.asarray(src, np.int64), np.asarray(dst, np.int64), np.asarray(amount, np.int64)
     bal = dict(initial_balance)
-    status: list[str | None] = [None] * n
-    sb = [0] * n
-    sa = [0] * n
-    db = [0] * n
-    da = [0] * n
-    settled_ids: dict[int, bool] = {}
-    settled_v, declined_v = Status.SETTLED.value, Status.DECLINED.value
-    for i in order.tolist():
-        s, d, a, dep = src[i], dst[i], amount[i], depends_on[i]
-        if s not in bal or d not in bal:
-            raise InvariantViolation(f"event {event_id[i]} references an unknown account")
-        ok = True
-        if dep != -1:
-            if dep not in settled_ids:
-                raise InvariantViolation(
-                    f"event {event_id[i]} depends on {dep}, which is not earlier in order"
-                )
-            ok = settled_ids[dep]
-        before_s, before_d = bal[s], bal[d]
-        limit = overdraft_limit[s]
-        if ok and limit is not None and before_s - a < -limit:
-            ok = False
-        if ok:
-            bal[s] = before_s - a
-            bal[d] = before_d + a
-        settled_ids[event_id[i]] = ok
-        status[i] = settled_v if ok else declined_v
-        sb[i], sa[i], db[i], da[i] = before_s, bal[s], before_d, bal[d]
-    return Settled(
-        order=order,
-        status=np.asarray(status, dtype=object),
-        src_before=np.asarray(sb, dtype=np.int64),
-        src_after=np.asarray(sa, dtype=np.int64),
-        dst_before=np.asarray(db, dtype=np.int64),
-        dst_after=np.asarray(da, dtype=np.int64),
-        final_balance=bal,
-    )
+    status = np.zeros(n, dtype=np.int8)
+    sb, sa, db, da = (np.zeros(n, dtype=np.int64) for _ in range(4))
+    outcome: dict[int, bool] = {}
+    for lo in range(0, n, _CHUNK):  # chunked so that only _CHUNK Python ints per column are alive at once
+        idx = order[lo : lo + _CHUNK]
+        rows = zip(
+            idx.tolist(),
+            eid_a[idx].tolist(),
+            src_a[idx].tolist(),
+            dst_a[idx].tolist(),
+            amt_a[idx].tolist(),
+            dep_a[idx].tolist(),
+            strict=True,
+        )
+        c_sb, c_sa, c_db, c_da, c_st = [], [], [], [], []
+        for _i, e, s, d, a, dp in rows:
+            if s not in bal or d not in bal:
+                raise InvariantViolation(f"event {e} references an unknown account")
+            ok = True
+            if dp != -1:
+                if dp not in outcome:
+                    raise InvariantViolation(f"event {e} depends on {dp}, which is not earlier in order")
+                ok = outcome[dp]
+            before_s, before_d = bal[s], bal[d]
+            limit = overdraft_limit[s]
+            if ok and limit is not None and before_s - a < -limit:
+                ok = False
+            if ok:
+                bal[s] = before_s - a
+                bal[d] = before_d + a
+            if e in needed:
+                outcome[e] = ok
+            c_st.append(0 if ok else DECLINED_CODE)
+            c_sb.append(before_s)
+            c_sa.append(bal[s])
+            c_db.append(before_d)
+            c_da.append(bal[d])
+        status[idx] = c_st
+        sb[idx], sa[idx], db[idx], da[idx] = c_sb, c_sa, c_db, c_da
+    return Settled(order, status, sb, sa, db, da, bal)

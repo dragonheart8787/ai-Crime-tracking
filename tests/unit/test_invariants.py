@@ -317,3 +317,15 @@ def test_roles_depend_on_phase(tiny_ds) -> None:
     per = lab.group_by("entity_id").agg(pl.col("role_label").n_unique().alias("n"))
     assert per.filter(pl.col("n") > 1).height > 0, "some members must change role across phases"
     assert set(lab["phase"].unique()) <= {"SETUP", "INFLOW", "HOLD", "MOVEMENT", "EXIT"}
+
+
+def test_instance_diversity_detects_template_instances(tiny_ds, check_kwargs) -> None:
+    nets = _df(tiny_ds, "ground_truth_networks")
+    fam = nets["family"][0]
+    clones = pl.concat([nets.filter(pl.col("family") == fam).head(1)] * 3).with_columns(
+        (pl.col("network_id") + pl.int_range(pl.len()) * 1_000_003).alias("network_id")
+    )
+    with pytest.raises(InvariantViolation, match="diversity"):
+        inv.check_instance_diversity(
+            _replace(tiny_ds.tables, "ground_truth_networks", clones), min_cv=0.1, min_instances=3
+        )

@@ -34,6 +34,40 @@ from the training and validation example sets **by family label**, and appear on
   hash (decision 0002), that never become scenario members and are excluded from TRAIN and VAL. It supplies clean,
   never-trained-on negatives for the OOD evaluation (see below).
 
+## Reference pool: method and validation (A2, Milestone 1 checkpoint 2)
+
+`E_ref` is drawn only from the recruitment partition's NONE cell (accounts no scenario can ever recruit, decision
+0002), so it can never contain a scenario member. The partition is a keyed hash of the account ID and does not look
+at archetypes, but a hash sample can still deviate by chance, and a skewed pool would make OOD negatives easier or
+harder than the population. Two methods are implemented (`splits.ref_pool_method`):
+
+- `none_cell_hash`: a plain keyed-hash sample of the NONE cell, 10% of normal accounts in expectation;
+- `stratified_archetype`: the same hash ranking taken per archetype, so the pool matches the population's archetype
+  shares exactly (archetypes come from the oracle table `person_truth`; this is protocol use, never a feature).
+
+**Decision rule, fixed before looking (EXPERIMENTS.md, EXP-M1-G freeze item 6):** use `stratified_archetype` if any
+archetype share of the hash pool differs from the population by more than 1.0 percentage point, or a chi-square
+goodness-of-fit test gives p < 0.01.
+
+**Measured on RESEARCH seed 1000** (100,000 normal accounts; `reports/a2_reference_pool_seed1000.json`):
+
+| Archetype | Population share | Hash pool share | Difference (pp) | Stratified pool share |
+|---|---|---|---|---|
+| family | 13.82% | 13.46% | -0.37 | 13.82% |
+| hf_merchant | 3.07% | 2.95% | -0.12 | 3.07% |
+| high_volume_business | 1.05% | 0.99% | -0.05 | 1.05% |
+| salary_worker | 40.15% | 41.15% | **+1.0005** | 40.15% |
+| small_business | 8.08% | 7.83% | -0.25 | 8.08% |
+| spending_surge | 11.90% | 11.53% | -0.36 | 11.90% |
+| student | 12.00% | 12.10% | +0.10 | 12.00% |
+| traveler | 9.94% | 9.99% | +0.05 | 9.94% |
+
+Hash pool: 10,152 accounts, chi-square 6.26, p = 0.51 (no evidence of systematic skew), but the salary_worker share
+is 1.00045 pp above the population, just over the 1.0 pp threshold. **By the pre-registered rule the gate run uses
+`stratified_archetype`** (10,001 accounts, largest deviation 0.008 pp). The margin is negligible and the chi-square
+test gives no evidence of bias; the switch follows the rule, not a judgment that the hash pool was biased. The
+stratified method is the default from checkpoint 2 on.
+
 ## Example sets
 
 | Set | Entities | Prediction times t | Targets / labels |

@@ -1,0 +1,146 @@
+{
+  "none_cell_hash": {
+    "pool_size": 10152,
+    "max_abs_diff_pp": 1.000452324665091,
+    "chi2": 6.257814331537543,
+    "p": 0.5099889803712385,
+    "rows": [
+      {
+        "archetype": "family",
+        "population_n": 13823,
+        "population_share": 0.13823000000000002,
+        "pool_n": 1366,
+        "pool_share": 0.13455476753349094,
+        "diff_pp": -0.3675232466509082
+      },
+      {
+        "archetype": "hf_merchant",
+        "population_n": 3068,
+        "population_share": 0.030680000000000002,
+        "pool_n": 299,
+        "pool_share": 0.029452324665090623,
+        "diff_pp": -0.1227675334909379
+      },
+      {
+        "archetype": "high_volume_business",
+        "population_n": 1046,
+        "population_share": 0.01046,
+        "pool_n": 101,
+        "pool_share": 0.009948778565799843,
+        "diff_pp": -0.05112214342001577
+      },
+      {
+        "archetype": "salary_worker",
+        "population_n": 40154,
+        "population_share": 0.40154,
+        "pool_n": 4178,
+        "pool_share": 0.4115445232466509,
+        "diff_pp": 1.000452324665091
+      },
+      {
+        "archetype": "small_business",
+        "population_n": 8076,
+        "population_share": 0.08076000000000001,
+        "pool_n": 795,
+        "pool_share": 0.0783096926713948,
+        "diff_pp": -0.24503073286052113
+      },
+      {
+        "archetype": "spending_surge",
+        "population_n": 11897,
+        "population_share": 0.11897,
+        "pool_n": 1171,
+        "pool_share": 0.11534672970843185,
+        "diff_pp": -0.36232702915681564
+      },
+      {
+        "archetype": "student",
+        "population_n": 11997,
+        "population_share": 0.11997000000000001,
+        "pool_n": 1228,
+        "pool_share": 0.12096138691883374,
+        "diff_pp": 0.09913869188337282
+      },
+      {
+        "archetype": "traveler",
+        "population_n": 9939,
+        "population_share": 0.09939,
+        "pool_n": 1014,
+        "pool_share": 0.09988179669030733,
+        "diff_pp": 0.04917966903073279
+      }
+    ]
+  },
+  "stratified_archetype": {
+    "pool_size": 10001,
+    "max_abs_diff_pp": 0.008014598540145856,
+    "chi2": 0.0020236152459424156,
+    "p": 0.9999999999971695,
+    "rows": [
+      {
+        "archetype": "family",
+        "population_n": 13823,
+        "population_share": 0.13823000000000002,
+        "pool_n": 1382,
+        "pool_share": 0.1381861813818618,
+        "diff_pp": -0.004381861813820831
+      },
+      {
+        "archetype": "hf_merchant",
+        "population_n": 3068,
+        "population_share": 0.030680000000000002,
+        "pool_n": 307,
+        "pool_share": 0.030696930306969305,
+        "diff_pp": 0.0016930306969302478
+      },
+      {
+        "archetype": "high_volume_business",
+        "population_n": 1046,
+        "population_share": 0.01046,
+        "pool_n": 105,
+        "pool_share": 0.010498950104989501,
+        "diff_pp": 0.003895010498950087
+      },
+      {
+        "archetype": "salary_worker",
+        "population_n": 40154,
+        "population_share": 0.40154,
+        "pool_n": 4015,
+        "pool_share": 0.40145985401459855,
+        "diff_pp": -0.008014598540145856
+      },
+      {
+        "archetype": "small_business",
+        "population_n": 8076,
+        "population_share": 0.08076000000000001,
+        "pool_n": 808,
+        "pool_share": 0.0807919208079192,
+        "diff_pp": 0.0031920807919194605
+      },
+      {
+        "archetype": "spending_surge",
+        "population_n": 11897,
+        "population_share": 0.11897,
+        "pool_n": 1190,
+        "pool_share": 0.11898810118988101,
+        "diff_pp": 0.0018101189881006285
+      },
+      {
+        "archetype": "student",
+        "population_n": 11997,
+        "population_share": 0.11997000000000001,
+        "pool_n": 1200,
+        "pool_share": 0.11998800119988001,
+        "diff_pp": 0.0018001199880005037
+      },
+      {
+        "archetype": "traveler",
+        "population_n": 9939,
+        "population_share": 0.09939,
+        "pool_n": 994,
+        "pool_share": 0.09939006099390062,
+        "diff_pp": 6.099390061076182e-06
+      }
+    ]
+  }
+}

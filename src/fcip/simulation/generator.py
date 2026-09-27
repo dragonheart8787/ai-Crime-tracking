@@ -24,15 +24,36 @@ from fcip.common.schemas import TABLE_NAMES, spec
 from fcip.common.taxonomy import DeviceKind, Family, RelationType
 from fcip.config.generator import GeneratorConfig
 from fcip.simulation.behavior import generate_person
-from fcip.simulation.events import NO_NETWORK, EventLog
+from fcip.simulation.events import (
+    CHANNELS,
+    NO_NETWORK,
+    NULL,
+    OUTCOMES,
+    PHASES,
+    TXN_TYPES,
+    EventArrays,
+    EventLog,
+    decode,
+)
 from fcip.simulation.labels import label_rows, member_rows, network_outcome, network_row, realized_prevalence
 from fcip.simulation.population import Population, build_population
 from fcip.simulation.recruitment import Partition, build_partition
 from fcip.simulation.scenarios import InstancePlan, plan_instance
-from fcip.simulation.settlement import settle
+from fcip.simulation.settlement import STATUS_VOCAB, settle
 from fcip.validation.invariants import check_all
 
 EXTERNAL_OPENED_AT = -3650 * 86400
+_BATCH_EVENTS = 200_000  # convert per-person Python logs to numpy columns in batches of about this size
+
+
+def _nullable(values: np.ndarray) -> pa.Array:
+    return pa.array(values, type=pa.int64(), mask=values == NULL)
+
+
+def _str_col(codes: np.ndarray, vocab: tuple[str, ...]) -> pa.Array:
+    if (codes == NULL).any():
+        raise InvariantViolation("null code in a non-nullable enumerated column")
+    return pa.DictionaryArray.from_arrays(pa.array(codes, type=pa.int8()), pa.array(vocab)).cast(pa.string())
 
 
 @dataclass
@@ -84,7 +105,7 @@ def activate_scenarios(
 
 
 # ---------------------------------------------------------------- member suppression
-def apply_suppressions(log: EventLog, plans: list[InstancePlan]) -> tuple[EventLog, int, int]:
+def apply_suppressions(ev: EventArrays, plans: list[InstancePlan]) -> tuple[EventArrays, int, int]:
     """Thin (or remove) normal events that involve scenario members while they are involved.
 
     Uses a keyed hash of ``event_id`` per network, never an RNG stream, so the decision for each event is
@@ -95,29 +116,29 @@ def apply_suppressions(log: EventLog, plans: list[InstancePlan]) -> tuple[EventL
         key = stable_key(f"retention/{pl.scenario_id}")
         for sp in pl.suppressions:
             windows.setdefault(sp.account_id, []).append((sp.start, sp.end, sp.retention, key))
+    c = ev.cols
     if not windows:
-        return log, 0, 0
+        return ev, 0, 0
     accs = np.fromiter(windows.keys(), dtype=np.int64)
-    t_src, t_dst = np.asarray(log.t_src, dtype=np.int64), np.asarray(log.t_dst, dtype=np.int64)
-    t_ts, t_eid = np.asarray(log.t_ts, dtype=np.int64), np.asarray(log.t_event_id, dtype=np.int64)
-    keep_t = np.ones(log.n_txn, dtype=bool)
+    t_src, t_dst, t_ts, t_eid = c["t_src"], c["t_dst"], c["t_ts"], c["t_event_id"]
+    keep_t = np.ones(ev.n_txn, dtype=bool)
     for i in np.flatnonzero(np.isin(t_src, accs) | np.isin(t_dst, accs)):
         for acc in (int(t_src[i]), int(t_dst[i])):
             for s, e, ret, key in windows.get(acc, ()):
                 if s <= t_ts[i] < e and keyed_uniform(key, t_eid[i : i + 1])[0] >= ret:
                     keep_t[i] = False
-    dropped_logins = {log.t_login[i] for i in np.flatnonzero(~keep_t) if log.t_login[i] is not None}
-    l_acc, l_ts = np.asarray(log.l_account, dtype=np.int64), np.asarray(log.l_ts, dtype=np.int64)
-    l_eid = np.asarray(log.l_event_id, dtype=np.int64)
-    linked = {x for x in log.t_login if x is not None}
-    keep_l = np.asarray([lid not in dropped_logins for lid in log.l_event_id], dtype=bool)
-    for i in np.flatnonzero(np.isin(l_acc, accs)):
-        if int(l_eid[i]) in linked:
-            continue  # session logins follow their transaction's decision
+    t_login = c["t_login"]
+    dropped = t_login[~keep_t]
+    dropped = dropped[dropped != NULL]
+    linked = t_login[t_login != NULL]
+    l_acc, l_ts, l_eid = c["l_account"], c["l_ts"], c["l_event_id"]
+    keep_l = ~np.isin(l_eid, dropped)
+    is_linked = np.isin(l_eid, linked)
+    for i in np.flatnonzero(np.isin(l_acc, accs) & ~is_linked):  # session logins follow their transaction
         for s, e, ret, key in windows.get(int(l_acc[i]), ()):
             if s <= l_ts[i] < e and keyed_uniform(key, l_eid[i : i + 1])[0] >= ret:
                 keep_l[i] = False
-    return log.filter(keep_t, keep_l), int((~keep_t).sum()), int((~keep_l).sum())
+    return ev.filter(keep_t, keep_l), int((~keep_t).sum()), int((~keep_l).sum())
 
 
 # ---------------------------------------------------------------- table builders
@@ -255,15 +276,20 @@ def generate(cfg: GeneratorConfig) -> Dataset:
     part = build_partition(cfg, [p.account_id for p in pop.persons])
     plans, activation = activate_scenarios(cfg, pop, part)
 
-    normal = EventLog()
+    batches: list[EventArrays] = []
+    pending = EventLog()
     for p in pop.persons:
-        normal.extend(generate_person(pop, cfg, p))
+        pending.extend(generate_person(pop, cfg, p))
+        if pending.n_txn + pending.n_login > _BATCH_EVENTS:
+            batches.append(EventArrays.from_log(pending))
+            pending = EventLog()
+    batches.append(EventArrays.from_log(pending))
+    normal = EventArrays.concat(batches)
+    del batches, pending
     normal, n_sup_txn, n_sup_login = apply_suppressions(normal, plans)
-
-    full = EventLog()
-    full.extend(normal)
-    for pl in plans:
-        full.extend(pl.log)
+    full = EventArrays.concat([normal] + [EventArrays.from_log(pl.log) for pl in plans])
+    del normal
+    c = full.cols
 
     # ledger setup
     initial = {p.account_id: p.initial_balance for p in pop.persons}
@@ -276,51 +302,55 @@ def generate(cfg: GeneratorConfig) -> Dataset:
         initial[ext.account_id] = 0
         limits[ext.account_id] = None
     st = settle(
-        full.t_event_id, full.t_ts, full.t_src, full.t_dst, full.t_amount, full.t_depends_on, initial, limits
+        c["t_event_id"], c["t_ts"], c["t_src"], c["t_dst"], c["t_amount"], c["t_depends_on"], initial, limits
     )
 
-    order = st.order
-    tx = {
-        "event_id": [full.t_event_id[i] for i in order],
-        "ts": [full.t_ts[i] for i in order],
-        "txn_type": [full.t_type[i] for i in order],
-        "channel": [full.t_channel[i] for i in order],
-        "src_account_id": [full.t_src[i] for i in order],
-        "dst_account_id": [full.t_dst[i] for i in order],
-        "merchant_id": [full.t_merchant[i] for i in order],
-        "atm_id": [full.t_atm[i] for i in order],
-        "amount_minor": [full.t_amount[i] for i in order],
-        "region": [full.t_region[i] for i in order],
-        "device_id": [full.t_device[i] for i in order],
-        "ip_id": [full.t_ip[i] for i in order],
-        "login_event_id": [full.t_login[i] for i in order],
-        "status": st.status[order].tolist(),
-        "src_balance_before_minor": st.src_before[order],
-        "src_balance_after_minor": st.src_after[order],
-        "dst_balance_before_minor": st.dst_before[order],
-        "dst_balance_after_minor": st.dst_after[order],
-    }
-    lorder = np.lexsort((np.asarray(full.l_event_id, dtype=np.int64), np.asarray(full.l_ts, dtype=np.int64)))
-    lg = {
-        "event_id": [full.l_event_id[i] for i in lorder],
-        "ts": [full.l_ts[i] for i in lorder],
-        "account_id": [full.l_account[i] for i in lorder],
-        "device_id": [full.l_device[i] for i in lorder],
-        "ip_id": [full.l_ip[i] for i in lorder],
-        "channel": [full.l_channel[i] for i in lorder],
-        "outcome": [full.l_outcome[i] for i in lorder],
-    }
+    o = st.order
     tables = _entity_tables(cfg, pop, plans)
-    tables["transactions"] = pa.table(tx)
-    tables["logins"] = pa.table(lg)
+    tables["transactions"] = pa.table(
+        {
+            "event_id": c["t_event_id"][o],
+            "ts": c["t_ts"][o],
+            "txn_type": _str_col(c["t_type"][o], TXN_TYPES),
+            "channel": _str_col(c["t_channel"][o], CHANNELS),
+            "src_account_id": c["t_src"][o],
+            "dst_account_id": c["t_dst"][o],
+            "merchant_id": _nullable(c["t_merchant"][o]),
+            "atm_id": _nullable(c["t_atm"][o]),
+            "amount_minor": c["t_amount"][o],
+            "region": c["t_region"][o],
+            "device_id": _nullable(c["t_device"][o]),
+            "ip_id": _nullable(c["t_ip"][o]),
+            "login_event_id": _nullable(c["t_login"][o]),
+            "status": _str_col(st.status[o], STATUS_VOCAB),
+            "src_balance_before_minor": st.src_before[o],
+            "src_balance_after_minor": st.src_after[o],
+            "dst_balance_before_minor": st.dst_before[o],
+            "dst_balance_after_minor": st.dst_after[o],
+        }
+    )
+    lo = np.lexsort((c["l_event_id"], c["l_ts"]))
+    tables["logins"] = pa.table(
+        {
+            "event_id": c["l_event_id"][lo],
+            "ts": c["l_ts"][lo],
+            "account_id": c["l_account"][lo],
+            "device_id": c["l_device"][lo],
+            "ip_id": c["l_ip"][lo],
+            "channel": _str_col(c["l_channel"][lo], CHANNELS),
+            "outcome": _str_col(c["l_outcome"][lo], OUTCOMES),
+        }
+    )
 
     # ground truth
     net_txn: dict[int, list[tuple[int, int, str | None, str]]] = {}
-    for i in range(full.n_txn):
-        if full.t_network[i] != NO_NETWORK:
-            net_txn.setdefault(full.t_network[i], []).append(
-                (full.t_event_id[i], full.t_ts[i], full.t_phase[i], st.status[i])
-            )
+    scen = np.flatnonzero(c["t_network"] != NO_NETWORK)
+    phases = decode(c["t_phase"][scen], PHASES)
+    for k, i in enumerate(scen.tolist()):
+        net_txn.setdefault(int(c["t_network"][i]), []).append(
+            (int(c["t_event_id"][i]), int(c["t_ts"][i]), phases[k], STATUS_VOCAB[int(st.status[i])])
+        )
+    del full, c, st, o
     lab, ev, nets, mem = [], [], [], []
     high_risk = {ph.value for ph in cfg.high_risk_phases}
     for pl in plans:
@@ -384,6 +414,8 @@ def generate(cfg: GeneratorConfig) -> Dataset:
         sim_end=sim_end,
         session_window=cfg.infrastructure.session_window_seconds,
         high_risk_phases=[ph.value for ph in cfg.high_risk_phases],
+        min_cv=cfg.validation.min_instance_amount_cv,
+        min_instances=cfg.validation.min_instances_for_cv,
     )
     digests = {name: table_digest(name, tables[name]) for name in TABLE_NAMES}
     n_internal = len(pop.persons) + sum(pl.n_created for pl in plans)

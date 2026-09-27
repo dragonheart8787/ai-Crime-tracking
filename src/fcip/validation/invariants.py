@@ -122,40 +122,51 @@ def check_accounts_open(tables: Tables, **_: object) -> None:
 
 
 def _ledger(tables: Tables) -> pl.DataFrame:
-    """One row per (event, side) in global order with recorded before/after balances."""
-    t = _df(tables, "transactions").with_row_index("pos")
-    base = ["pos", "event_id", "ts", "status", "amount_minor"]
+    """One row per (event, side) in global order with recorded before/after balances and the settled delta."""
+    t = (
+        _df(tables, "transactions")
+        .select(
+            "event_id",
+            "ts",
+            "status",
+            "amount_minor",
+            "src_account_id",
+            "dst_account_id",
+            "src_balance_before_minor",
+            "src_balance_after_minor",
+            "dst_balance_before_minor",
+            "dst_balance_after_minor",
+        )
+        .with_row_index("pos")
+    )
+    settled = pl.col("status") == Status.SETTLED.value
     src = t.select(
-        *base,
+        "pos",
+        "ts",
         pl.col("src_account_id").alias("account_id"),
         pl.col("src_balance_before_minor").alias("before"),
         pl.col("src_balance_after_minor").alias("after"),
-        pl.lit(-1).alias("sign"),
+        pl.when(settled).then(-pl.col("amount_minor")).otherwise(0).alias("delta"),
     )
     dst = t.select(
-        *base,
+        "pos",
+        "ts",
         pl.col("dst_account_id").alias("account_id"),
         pl.col("dst_balance_before_minor").alias("before"),
         pl.col("dst_balance_after_minor").alias("after"),
-        pl.lit(1).alias("sign"),
+        pl.when(settled).then(pl.col("amount_minor")).otherwise(0).alias("delta"),
     )
+    del t
     return pl.concat([src, dst]).sort("account_id", "pos")
 
 
 def check_balances(tables: Tables, **_: object) -> None:
     """Per-account chain consistency, settled/declined arithmetic, overdraft limits, and an independent
     recomputation of every balance from initial balances plus settled amounts."""
-    led = _ledger(tables)
     acc = _df(tables, "accounts").select(
         "account_id", "initial_balance_minor", "overdraft_limit_minor", "account_kind"
     )
-    led = led.join(acc, on="account_id", how="left")
-    delta = (
-        pl.when(pl.col("status") == Status.SETTLED.value)
-        .then(pl.col("sign") * pl.col("amount_minor"))
-        .otherwise(0)
-    )
-    led = led.with_columns(delta.alias("delta"))
+    led = _ledger(tables).join(acc, on="account_id", how="left")
     bad = led.filter(pl.col("after") != pl.col("before") + pl.col("delta"))
     if bad.height:
         _fail(
@@ -186,21 +197,31 @@ def check_balances(tables: Tables, **_: object) -> None:
 
 
 def check_conservation(tables: Tables, sim_end: int, **_: object) -> None:
-    """Sum of all balances (internal + external) equals the initial total at every day boundary and at
-    the end."""
+    """Sum of all recorded balances (internal + external) equals the initial total at every day boundary
+    and at the end.
+
+    Uses only recorded balance columns: the total at a boundary is the sum over accounts of the last
+    recorded ``after`` before the boundary (initial balance if none). Equivalently, with
+    ``step = after - previous recorded after`` per account (previous = initial balance for the first row),
+    the running sum of ``step`` over all rows before each boundary must be zero.
+    """
     acc = _df(tables, "accounts").select("account_id", "initial_balance_minor")
-    total0 = int(acc["initial_balance_minor"].sum())
-    led = _ledger(tables).select("account_id", "ts", "pos", "after")
-    for boundary in list(range(SECONDS_PER_DAY, sim_end, SECONDS_PER_DAY)) + [sim_end]:
-        last = (
-            led.filter(pl.col("ts") < boundary).sort("pos").group_by("account_id").agg(pl.col("after").last())
-        )
-        cur = acc.join(last, on="account_id", how="left").select(
-            pl.coalesce(pl.col("after"), pl.col("initial_balance_minor")).alias("bal")
-        )
-        total = int(cur["bal"].sum())
-        if total != total0:
-            _fail("conservation", f"total balance {total} != initial total {total0} at t={boundary}")
+    led = _ledger(tables).select("account_id", "pos", "ts", "after").join(acc, on="account_id", how="left")
+    led = led.with_columns(
+        (
+            pl.col("after")
+            - pl.col("after").shift(1).over("account_id").fill_null(pl.col("initial_balance_minor"))
+        ).alias("step"),
+        (pl.col("ts") // SECONDS_PER_DAY).alias("day"),
+    )
+    per_day = led.group_by("day").agg(pl.col("step").sum()).sort("day")
+    days = pl.DataFrame({"day": list(range(sim_end // SECONDS_PER_DAY + 1))}, schema={"day": pl.Int64})
+    running = days.join(per_day.with_columns(pl.col("day").cast(pl.Int64)), on="day", how="left").select(
+        "day", pl.col("step").fill_null(0).cum_sum().alias("drift")
+    )
+    bad = running.filter(pl.col("drift") != 0)
+    if bad.height:
+        _fail("conservation", f"total balance drifts from the initial total by day {bad['day'][0]}", bad)
 
 
 def check_labels(tables: Tables, high_risk_phases: list[str], **_: object) -> None:
@@ -244,7 +265,7 @@ def check_labels(tables: Tables, high_risk_phases: list[str], **_: object) -> No
         _fail("S4", "detected flag inconsistent with known_at")
     # known_at never precedes the behavior it labels.
     j = lab.join(nets.select("network_id", "start_ts"), on="network_id")
-    if j.filter(pl.col("known_at").is_not_null() & (pl.col("known_at") <= pl.col("valid_from"))).height:
+    if j.filter(pl.col("known_at").is_not_null() & (pl.col("known_at") < pl.col("valid_from"))).height:
         _fail("labels", "label known before its interval starts")
     # event_labels complete for scenario events and terminal events well formed.
     t = _df(tables, "transactions").select("event_id", "ts", "status", "src_account_id", "dst_account_id")
@@ -309,6 +330,23 @@ def check_relations(tables: Tables, **_: object) -> None:
         _fail("relations", "card payment references unknown merchant")
 
 
+def check_instance_diversity(
+    tables: Tables, min_cv: float = 0.1, min_instances: int = 3, **_: object
+) -> None:
+    """Decision 0005: repeated instances of a family must not be near-identical templates. For every family with
+    at least ``min_instances`` instances, the coefficient of variation of the drawn amount scale must reach
+    ``min_cv``."""
+    nets = _df(tables, "ground_truth_networks")
+    stats = nets.group_by("family").agg(
+        pl.len().alias("n"),
+        pl.col("amount_scale_minor").cast(pl.Float64).std().alias("sd"),
+        pl.col("amount_scale_minor").cast(pl.Float64).mean().alias("mu"),
+    )
+    bad = stats.filter((pl.col("n") >= min_instances) & (pl.col("sd") / pl.col("mu") < min_cv))
+    if bad.height:
+        _fail("diversity", f"{bad.height} families with near-identical instances", bad)
+
+
 CHECKS: dict[str, Callable[..., None]] = {
     "schema_no_currency": check_schema_no_currency,
     "timestamps": check_timestamps,
@@ -320,12 +358,28 @@ CHECKS: dict[str, Callable[..., None]] = {
     "labels_S1_S2_S4": check_labels,
     "scenario_causality": check_scenario_causality,
     "relations": check_relations,
+    "instance_diversity": check_instance_diversity,
 }
 
 
-def check_all(tables: Tables, *, sim_end: int, session_window: int, high_risk_phases: list[str]) -> list[str]:
+def check_all(
+    tables: Tables,
+    *,
+    sim_end: int,
+    session_window: int,
+    high_risk_phases: list[str],
+    min_cv: float = 0.1,
+    min_instances: int = 3,
+) -> list[str]:
     ran = []
     for name, fn in CHECKS.items():
-        fn(tables, sim_end=sim_end, session_window=session_window, high_risk_phases=high_risk_phases)
+        fn(
+            tables,
+            sim_end=sim_end,
+            session_window=session_window,
+            high_risk_phases=high_risk_phases,
+            min_cv=min_cv,
+            min_instances=min_instances,
+        )
         ran.append(name)
     return ran

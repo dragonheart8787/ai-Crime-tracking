@@ -18,7 +18,7 @@ Standing rules for every experiment in this file:
 
 | ID | Title | Status |
 |---|---|---|
-| EXP-M1-G | Milestone 1 non-triviality gates | PRE-REGISTERED DRAFT (Phase 0 revision); to be frozen before the first gate run |
+| EXP-M1-G | Milestone 1 non-triviality gates | FROZEN 2026-09-27 (Milestone 1 checkpoint 2), before the first gate run; see the freeze addendum |
 | EXP-LM (planned) | Label-maturity ablation: `include_immature` vs `mature_only` | NOT REGISTERED YET (note only, below) |
 | (planned) | Prevalence sweep for distribution shift | NOT REGISTERED YET (note only, below) |
 | (planned) | Detection-delay sensitivity analysis | NOT REGISTERED YET (note only, below) |
@@ -116,6 +116,45 @@ check is the oracle-phase-feature ceiling in `PHASE0_ASSESSMENT.md` section 5.3,
 2. All gates are re-run on the same 5 calibration seeds.
 3. After 3 failed iterations, work stops and the situation is reported for a decision (possible outcomes include accepting
    that a gate was mis-specified, which would be recorded as a protocol deviation, not silently applied).
+
+### Freeze addendum (2026-09-27, written before any gate run on a RESEARCH or GATE dataset)
+
+The draft above left some implementation details open. They are fixed here, before results exist. No threshold,
+feature or probe setting was changed.
+
+1. **Target intervals.** "Active scenario phase at t" uses the label intervals as amended by A1 (a member's labels
+   start at its own first observable event in the network).
+2. **Snapshot cutoff.** Snapshot day `d` has inclusive cutoff `t = d * 86400 - 1`; window `W` = days `d-W .. d-1`.
+   TRAIN days are those with `t + H_max <= train_end` (days 1 to 53 in the 90-day profiles), VAL days those with
+   `train_end <= t` and `t + H_max <= val_end` (days 61 to 68). Only accounts open at `t` are prediction points.
+3. **Feature details.** F4 and F11 count settled transactions only; F7 uses the most recent settled credit that is
+   strictly earlier in `(ts, event_id)` order; F12 counts declined transactions with the account as source. Every
+   feature is computed through the temporal store; the fast grid path is verified equal to the per-row reference.
+4. **Probe preprocessing.** `log1p` is applied to the features that are non-negative on TRAIN (all except
+   `balance`); standardization is fit on TRAIN. Probes train on all TRAIN points (`include_immature`) with
+   ground-truth targets (Q-R5).
+5. **Excluded entities.** OOD-family members and the reference pool `E_ref` are excluded from TRAIN and VAL.
+6. **Reference pool method (A2), decision rule fixed in advance.** Compute the archetype composition of the default
+   pool (`none_cell_hash`) against all normal accounts. If any archetype's share differs by more than
+   **1.0 percentage point**, or a chi-square goodness-of-fit test gives **p < 0.01**, use `stratified_archetype`
+   instead. The comparison is recorded in decision 0009 either way.
+7. **G3 computation.** For computational reasons G3 is computed on uniform random samples (named stream, per
+   seed) of **200,000 TRAIN** and **200,000 VAL** points (all points if fewer). Both LR models (static only;
+   static plus context) are fit on the same TRAIN sample and scored on the same VAL sample. Context features:
+   mean over distinct internal counterparties of settled transfers in the last 30 days of their `txn_count_30d`,
+   `in_degree_30d`, `out_degree_30d` and `account_age_days` at the same snapshot (0 if none), and burstiness,
+   median inter-event gap and time from first credit to first later debit in the last 30 days. CI: 1,000
+   cluster-bootstrap resamples, positive clusters (by network) and negative clusters (by account) resampled
+   separately. Report only.
+8. **G4.** Top 1% of LR-scored VAL points; share of false positives by archetype. Report only.
+9. **Informational, requested in review (not a gate):** G1-style best single-feature AP and LR AP restricted to VAL
+   points of the archetype cluster that looked alike on 90-day aggregates (salary_worker, traveler, family,
+   spending_surge) versus the clearly distinct one (small_business, hf_merchant, student).
+10. **Disclosure.** Before this freeze the gate runner was smoke-tested once on DEV seed 42 (not a gate dataset;
+    DEV is never used for gates). That run showed probes close to prevalence (best single-feature AP 0.0057, LR AP
+    0.0019, point prevalence 0.0012, 22 VAL positives). Nothing in this addendum was changed in response.
+11. **Profile.** The Q-R4 rule is applied on the measured wall-clock time of one RESEARCH generation (A5), recorded
+    in decision 0010 before the gate run.
 
 ### Iteration log
 

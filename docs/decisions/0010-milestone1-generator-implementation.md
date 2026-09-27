@@ -83,3 +83,25 @@ Measured with `cProfile` on one DEV generation (2,500 persons, 90 days, 327K tra
 RESEARCH generation time is NOT YET EVALUATED (not run at checkpoint 1). A linear extrapolation (40 times the persons,
 16 s x 40) gives roughly 11 minutes, close to the 15-minute re-evaluation trigger in 0006 and to the Q-R4 runtime
 threshold, so it must be measured before the gate run.
+
+## 10. Measured RESEARCH generation (A5, Milestone 1 checkpoint 2)
+
+Measured, not extrapolated: RESEARCH profile, calibration seed 1000, one run in this 4-CPU, 15 GB cloud sandbox,
+with the compact numpy event store and chunked settlement introduced at checkpoint 2 (they cut DEV peak memory from
+0.77 GB to 0.50 GB with a byte-identical DEV dataset; without them RESEARCH would have needed roughly 31 GB).
+
+| Quantity | Value |
+|---|---|
+| wall-clock time (generation, invariant checks, hashing, Parquet writing) | **540.6 s (9.0 min)** |
+| peak resident memory | 11.82 GB |
+| transactions / logins | 12,852,147 / 16,830,023 |
+| realized prevalence | 0.01001 (target 0.01) |
+
+Q-R4 rule: 9.0 minutes is below the 15-minute threshold, so the gates run on the **RESEARCH** profile (not the 25K
+GATE profile). No Rust port is warranted by this number (decision 0006 trigger: 15 minutes or 24 GB). Peak memory at
+11.8 GB is the tighter constraint in this sandbox; the Windows laptop has 64 GB.
+
+Two RESEARCH-only failures were found and fixed before this measurement: (1) `max_instances: 40` for every family
+could not meet the 1% quota for small-instance families (pass_through reached 40 instances with 65 of 100 members;
+the generator raised as designed) and was replaced by per-family values; (2) the detection-anchor rule allowed a
+label row to start after `known_at` (decision 0004, revised).
